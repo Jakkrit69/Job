@@ -205,10 +205,28 @@ html, body {
   border: 1px solid var(--line);
   border-left-width: 4px;
   border-radius: 8px;
-  padding: 8px 9px;
+  padding: 8px 9px 8px 6px;
   font-size: 13px;
   line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  touch-action: none;
 }
+.lp-task-card.dragging {
+  opacity: 0.55;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.15);
+}
+.lp-drag-handle {
+  cursor: grab;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.4;
+  padding: 0 2px;
+  user-select: none;
+  touch-action: none;
+}
+.lp-task-body { flex: 1; min-width: 0; }
 .lp-task-card.pending { border-left-color: var(--gold); }
 .lp-task-card.doing { border-left-color: #4E8FB0; }
 .lp-task-card.done { border-left-color: var(--sage); }
@@ -302,7 +320,9 @@ html, body {
     await fetch('/api/tasks/' + id, { method: 'DELETE' });
   }
 
-  function tasksForMonth(mKey) { return state.tasks.filter(t => t.monthKey === mKey); }
+  function tasksForMonth(mKey) {
+    return state.tasks.filter(t => t.monthKey === mKey).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
 
   function monthProgress(mKey) {
     const list = tasksForMonth(mKey);
@@ -342,14 +362,17 @@ html, body {
         const canLeft = t.status !== "pending";
         const canRight = t.status !== "done";
         return `
-          <div class="lp-task-card ${t.status}">
-            <div class="lp-task-text">${escapeHTML(t.text)}</div>
-            <div class="lp-task-actions">
-              <div class="lp-move-btns">
-                ${canLeft ? `<button data-move="-1" data-id="${t.id}">←</button>` : ""}
-                ${canRight ? `<button data-move="1" data-id="${t.id}">→</button>` : ""}
+          <div class="lp-task-card ${t.status}" data-id="${t.id}">
+            <div class="lp-drag-handle" data-drag="${t.id}">⠿</div>
+            <div class="lp-task-body">
+              <div class="lp-task-text">${escapeHTML(t.text)}</div>
+              <div class="lp-task-actions">
+                <div class="lp-move-btns">
+                  ${canLeft ? `<button data-move="-1" data-id="${t.id}">←</button>` : ""}
+                  ${canRight ? `<button data-move="1" data-id="${t.id}">→</button>` : ""}
+                </div>
+                <button class="lp-del-btn" data-del="${t.id}">ลบ</button>
               </div>
-              <button class="lp-del-btn" data-del="${t.id}">ลบ</button>
             </div>
           </div>`;
       }).join("");
@@ -420,7 +443,57 @@ html, body {
     }));
     root.querySelectorAll('[data-move]').forEach(el => el.addEventListener('click', () => moveTask(el.getAttribute('data-id'), parseInt(el.getAttribute('data-move'), 10))));
     root.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', () => deleteTask(el.getAttribute('data-del'))));
+    root.querySelectorAll('[data-drag]').forEach(el => el.addEventListener('pointerdown', onDragStart));
   }
+
+  // ---------- ลากจัดลำดับ ----------
+  let dragState = null;
+
+  function onDragStart(e) {
+    const handle = e.currentTarget;
+    const card = handle.closest('.lp-task-card');
+    const list = card.parentElement;
+    dragState = { card, list };
+    card.classList.add('dragging');
+    try { card.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+  }
+
+  function onDragMove(e) {
+    if (!dragState) return;
+    const { card, list } = dragState;
+    const siblings = [...list.querySelectorAll('.lp-task-card')].filter(el => el !== card);
+    const y = e.clientY;
+    let target = null;
+    for (const sib of siblings) {
+      const rect = sib.getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) { target = sib; break; }
+    }
+    if (target) list.insertBefore(card, target);
+    else list.appendChild(card);
+  }
+
+  async function onDragEnd(e) {
+    if (!dragState) return;
+    const { card, list } = dragState;
+    card.classList.remove('dragging');
+    dragState = null;
+    const ids = [...list.querySelectorAll('.lp-task-card')].map(el => el.getAttribute('data-id'));
+    ids.forEach((id, idx) => {
+      const t = state.tasks.find(t => t.id === id);
+      if (t) t.order = idx;
+    });
+    try {
+      await fetch('/api/tasks/reorder', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+    } catch (err) {}
+  }
+
+  root.addEventListener('pointermove', onDragMove);
+  root.addEventListener('pointerup', onDragEnd);
+  root.addEventListener('pointercancel', onDragEnd);
 
   loadAll();
   setInterval(loadAll, 15000); // ดึงข้อมูลใหม่ทุก 15 วิ เผื่อมีงานเพิ่มจาก LINE
