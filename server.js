@@ -19,16 +19,20 @@ const THAI_MONTHS_FULL = [
   "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
   "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
 ];
+const THAI_MONTHS_SHORT = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 const STATUS_LABEL = { pending: "ค้าง", doing: "กำลังทำ", done: "เสร็จแล้ว" };
+const STATUS_ORDER = ["pending", "doing", "done"];
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    return { tasks: [], lineUserId: null };
+    return { tasks: [], lineUserId: null, lastList: [] };
   }
   try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    if (!d.lastList) d.lastList = [];
+    return d;
   } catch (e) {
-    return { tasks: [], lineUserId: null };
+    return { tasks: [], lineUserId: null, lastList: [] };
   }
 }
 
@@ -50,8 +54,33 @@ function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+// พยายามแปลงคำที่พิมพ์มา (ตัวเลข 1-12 หรือชื่อเดือนไทย) ให้เป็น monthKey ของปีปัจจุบัน
+function parseMonthToken(token) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const n = parseInt(token, 10);
+  if (!isNaN(n) && n >= 1 && n <= 12) {
+    return year + "-" + String(n).padStart(2, "0");
+  }
+  const idxFull = THAI_MONTHS_FULL.findIndex((m) => token.startsWith(m) || m.startsWith(token));
+  if (idxFull !== -1) return year + "-" + String(idxFull + 1).padStart(2, "0");
+  const idxShort = THAI_MONTHS_SHORT.findIndex((m) => token.replace(/\./g, "") === m.replace(/\./g, ""));
+  if (idxShort !== -1) return year + "-" + String(idxShort + 1).padStart(2, "0");
+  return null;
+}
+
+function formatTaskList(tasks, mKey) {
+  if (tasks.length === 0) return `ไม่มีงานในเดือน${monthLabel(mKey)}เลยครับ`;
+  const lines = tasks.map((t, i) => `${i + 1}. [${STATUS_LABEL[t.status]}] ${t.text}`).join('\n');
+  return (
+    `งาน — ${monthLabel(mKey)}\n${lines}\n\n` +
+    `พิมพ์ "ทำ เลข" เพื่อขยับสถานะไปข้างหน้า (ค้าง→กำลังทำ→เสร็จแล้ว)\n` +
+    `พิมพ์ "ย้อน เลข" เพื่อขยับสถานะย้อนกลับ\n` +
+    `พิมพ์ "ลบ เลข" เพื่อลบงานนั้น`
+  );
+}
+
 // ---------------- LINE webhook ----------------
-// NOTE: must come before express.json() because line.middleware needs the raw body
 app.post('/webhook', line.middleware(lineConfig), (req, res) => {
   Promise.all(req.body.events.map(handleLineEvent))
     .then((result) => res.json(result))
@@ -73,8 +102,14 @@ async function handleLineEvent(event) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
       text:
-        'สวัสดีครับ 👋 พิมพ์ข้อความอะไรก็ได้ ผมจะเพิ่มเป็นงาน "ค้าง" ให้ในสมุดงานเดือนนี้ทันที\n' +
-        'พิมพ์ "รายการ" เพื่อดูงานค้างของเดือนนี้',
+        'สวัสดีครับ 👋 นี่คือคำสั่งที่ใช้ได้:\n\n' +
+        '• พิมพ์ข้อความอะไรก็ได้ → เพิ่มเป็นงาน "ค้าง" ของเดือนนี้\n' +
+        '• "เดือน 8 ซื้อของขวัญ" → เพิ่มงานลงเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
+        '• "รายการ" → ดูรายการงานของเดือนนี้ พร้อมเลขกำกับ\n' +
+        '• "ทำ 2" → ขยับสถานะงานหมายเลข 2 ไปข้างหน้า\n' +
+        '• "ย้อน 2" → ขยับสถานะงานหมายเลข 2 ย้อนกลับ\n' +
+        '• "ลบ 2" → ลบงานหมายเลข 2\n\n' +
+        '(เลขที่ใช้อ้างอิงจะยึดตามรายการล่าสุดที่พิมพ์ "รายการ" ออกมาดูก่อนเสมอ)',
     });
   }
 
@@ -83,34 +118,89 @@ async function handleLineEvent(event) {
   }
 
   const text = event.message.text.trim();
+  const curKey = currentMonthKey();
 
+  // ----- "รายการ" : แสดงรายการงานของเดือนนี้ พร้อมจำลำดับไว้ใช้อ้างอิง -----
   if (text === 'รายการ' || text.toLowerCase() === 'list') {
-    const mKey = currentMonthKey();
-    const pending = data.tasks.filter((t) => t.monthKey === mKey && t.status !== 'done');
-    if (pending.length === 0) {
+    const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
+    data.lastList = monthTasks.map((t) => t.id);
+    saveData(data);
+    return client.replyMessage(event.replyToken, { type: 'text', text: formatTaskList(monthTasks, curKey) });
+  }
+
+  // ----- "ทำ N" / "ย้อน N" : ขยับสถานะ -----
+  let m = text.match(/^(ทำ|ย้อน)\s+(\d+)$/);
+  if (m) {
+    const dir = m[1] === 'ทำ' ? 1 : -1;
+    const idx = parseInt(m[2], 10) - 1;
+    const taskId = data.lastList[idx];
+    const task = data.tasks.find((t) => t.id === taskId);
+    if (!task) {
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: `ไม่มีงานค้างในเดือน${monthLabel(mKey)}แล้วครับ 🎉`,
+        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
       });
     }
-    const lines = pending
-      .map((t, i) => `${i + 1}. [${STATUS_LABEL[t.status]}] ${t.text}`)
-      .join('\n');
+    const newIdx = STATUS_ORDER.indexOf(task.status) + dir;
+    if (newIdx < 0 || newIdx > 2) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: `"${task.text}" อยู่ที่สถานะ [${STATUS_LABEL[task.status]}] อยู่แล้ว ขยับต่อไม่ได้ครับ`,
+      });
+    }
+    task.status = STATUS_ORDER[newIdx];
+    saveData(data);
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `งานค้าง — ${monthLabel(mKey)}\n${lines}`,
+      text: `อัปเดตแล้ว: "${task.text}" → [${STATUS_LABEL[task.status]}]`,
     });
   }
 
-  // ข้อความอื่นๆ ทั้งหมด: เพิ่มเป็นงานค้างใหม่ของเดือนปัจจุบัน
-  const mKey = currentMonthKey();
-  const task = { id: newId(), text, status: 'pending', monthKey: mKey };
+  // ----- "ลบ N" : ลบงาน -----
+  m = text.match(/^ลบ\s+(\d+)$/);
+  if (m) {
+    const idx = parseInt(m[1], 10) - 1;
+    const taskId = data.lastList[idx];
+    const task = data.tasks.find((t) => t.id === taskId);
+    if (!task) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
+      });
+    }
+    data.tasks = data.tasks.filter((t) => t.id !== taskId);
+    saveData(data);
+    return client.replyMessage(event.replyToken, { type: 'text', text: `ลบแล้ว: "${task.text}"` });
+  }
+
+  // ----- "เดือน X ข้อความ" : เพิ่มงานลงเดือนอื่น -----
+  m = text.match(/^เดือน\s+(\S+)\s+(.+)$/s);
+  if (m) {
+    const mKey = parseMonthToken(m[1]);
+    const taskText = m[2].trim();
+    if (!mKey) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'ไม่เข้าใจชื่อเดือนครับ ลองพิมพ์เป็นเลข 1-12 เช่น "เดือน 8 ซื้อของขวัญ" หรือชื่อเดือนเต็ม เช่น "เดือน สิงหาคม ซื้อของขวัญ"',
+      });
+    }
+    const task = { id: newId(), text: taskText, status: 'pending', monthKey: mKey };
+    data.tasks.push(task);
+    saveData(data);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `✅ เพิ่มงานแล้ว: "${taskText}"\nหมวด: ค้าง (${monthLabel(mKey)})`,
+    });
+  }
+
+  // ----- ข้อความอื่นๆ ทั้งหมด: เพิ่มเป็นงานค้างใหม่ของเดือนปัจจุบัน -----
+  const task = { id: newId(), text, status: 'pending', monthKey: curKey };
   data.tasks.push(task);
   saveData(data);
 
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: `✅ เพิ่มงานแล้ว: "${text}"\nหมวด: ค้าง (${monthLabel(mKey)})`,
+    text: `✅ เพิ่มงานแล้ว: "${text}"\nหมวด: ค้าง (${monthLabel(curKey)})`,
   });
 }
 
