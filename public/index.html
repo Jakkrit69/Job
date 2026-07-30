@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>สมุดงานรายเดือน</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@500;600;700&family=Sarabun:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  --ink: #24303F; --ink-soft: #5B6572;
+  --paper: #EDEBE2; --card: #F8F7F2; --line: #D8D4C6;
+  --pending: #B5792A; --doing: #2E6591; --done: #35735A;
+  font-family: 'Sarabun', sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  background-image: linear-gradient(var(--line) 1px, transparent 1px);
+  background-size: 100% 2.1em;
+  min-height: 100%;
+  padding: 28px 20px 60px;
+}
+
+.inner { max-width: 980px; margin: 0 auto; }
+
+.header-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 10px; }
+.title { font-family: 'Kanit', sans-serif; font-weight: 700; font-size: 26px; }
+.title span { color: var(--pending); }
+
+.year-nav { display: flex; align-items: center; gap: 10px; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 15px; color: var(--ink-soft); }
+.year-nav button { background: var(--card); border: 1px solid var(--line); border-radius: 6px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+
+.line-badge { display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 3px 10px; border-radius: 20px; margin-bottom: 22px; border: 1px dashed var(--ink-soft); color: var(--ink-soft); }
+.line-badge.on { border-color: var(--done); color: var(--done); }
+.line-badge .b-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+
+.month-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 26px; }
+@media (max-width: 640px) { .month-grid { grid-template-columns: repeat(3, 1fr); } }
+
+.month-pill { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 9px 6px 8px; text-align: center; cursor: pointer; transition: transform .12s ease; }
+.month-pill:hover { transform: translateY(-2px); }
+.month-pill.active { border-color: var(--ink); background: var(--ink); color: var(--card); }
+.month-pill .m-name { font-size: 13px; font-weight: 600; display: block; }
+.month-pill .m-bar { margin-top: 6px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.month-pill.active .m-bar { background: rgba(255,255,255,0.25); }
+.month-pill .m-bar-fill { height: 100%; background: var(--done); }
+.month-pill.active .m-bar-fill { background: #8FD6B3; }
+.month-pill .m-count { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-soft); margin-top: 3px; display: block; }
+.month-pill.active .m-count { color: rgba(255,255,255,0.7); }
+
+.month-heading { font-family: 'Kanit', sans-serif; font-size: 20px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+.month-heading .stamp-total { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: var(--ink-soft); border: 1px dashed var(--ink-soft); border-radius: 20px; padding: 2px 10px; }
+
+.columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 760px) { .columns { grid-template-columns: 1fr; } }
+
+.col { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-height: 160px; display: flex; flex-direction: column; }
+.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.col-label { font-family: 'Kanit', sans-serif; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 7px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.dot.pending { background: var(--pending); } .dot.doing { background: var(--doing); } .dot.done { background: var(--done); }
+.col-count { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-soft); }
+
+.add-row { display: flex; gap: 6px; margin-bottom: 12px; }
+.add-row input { flex: 1; border: 1px solid var(--line); background: var(--paper); border-radius: 6px; padding: 7px 9px; font-family: 'Sarabun', sans-serif; font-size: 13px; color: var(--ink); }
+.add-row input:focus { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
+.add-row button { border: none; background: var(--ink); color: var(--card); border-radius: 6px; padding: 0 12px; font-size: 15px; cursor: pointer; }
+
+.task-list { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.task-card { background: #fff; border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 9px 10px; font-size: 13.5px; line-height: 1.45; box-shadow: 1px 2px 0 rgba(36,48,63,0.04); }
+.task-card.pending { border-left-color: var(--pending); } .task-card.doing { border-left-color: var(--doing); } .task-card.done { border-left-color: var(--done); }
+.task-card.done .task-text { text-decoration: line-through; color: var(--ink-soft); }
+.task-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 7px; }
+.move-btns { display: flex; gap: 5px; }
+.move-btns button, .del-btn { background: transparent; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; padding: 2px 6px; cursor: pointer; color: var(--ink-soft); font-family: 'JetBrains Mono', monospace; }
+.del-btn { color: #A14A3E; border-color: transparent; }
+.empty-hint { font-size: 12px; color: var(--ink-soft); font-style: italic; padding: 8px 2px; }
+.loading-note { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink-soft); padding: 20px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="inner" id="root">
+  <div class="loading-note">กำลังโหลดข้อมูล...</div>
+</div>
+
+<script>
+(function () {
+  const THAI_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+  const THAI_MONTHS_FULL = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+  const STATUS_LABEL = { pending: "ค้าง", doing: "กำลังทำ", done: "เสร็จแล้ว" };
+
+  const now = new Date();
+  let state = { year: now.getFullYear(), monthIndex: now.getMonth(), tasks: [], lineConnected: false, loaded: false };
+
+  const root = document.getElementById('root');
+
+  function monthKey(year, mIdx) { return year + "-" + String(mIdx + 1).padStart(2, "0"); }
+
+  async function loadAll() {
+    const [tasksRes, statusRes] = await Promise.all([
+      fetch('/api/tasks').then(r => r.json()).catch(() => []),
+      fetch('/api/status').then(r => r.json()).catch(() => ({ lineConnected: false })),
+    ]);
+    state.tasks = tasksRes;
+    state.lineConnected = statusRes.lineConnected;
+    state.loaded = true;
+    render();
+  }
+
+  async function addTask(mKey, status, text) {
+    if (!text || !text.trim()) return;
+    const res = await fetch('/api/tasks', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.trim(), status, monthKey: mKey }),
+    });
+    const task = await res.json();
+    state.tasks.push(task);
+    render();
+  }
+
+  async function moveTask(id, dir) {
+    const order = ["pending", "doing", "done"];
+    const t = state.tasks.find(t => t.id === id);
+    if (!t) return;
+    const newIdx = order.indexOf(t.status) + dir;
+    if (newIdx < 0 || newIdx > 2) return;
+    t.status = order[newIdx];
+    render();
+    await fetch('/api/tasks/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: t.status }) });
+  }
+
+  async function deleteTask(id) {
+    state.tasks = state.tasks.filter(t => t.id !== id);
+    render();
+    await fetch('/api/tasks/' + id, { method: 'DELETE' });
+  }
+
+  function tasksForMonth(mKey) { return state.tasks.filter(t => t.monthKey === mKey); }
+
+  function monthProgress(mKey) {
+    const list = tasksForMonth(mKey);
+    if (list.length === 0) return { pct: 0, total: 0 };
+    const done = list.filter(t => t.status === "done").length;
+    return { pct: Math.round((done / list.length) * 100), total: list.length };
+  }
+
+  function escapeHTML(str) { const d = document.createElement("div"); d.textContent = str; return d.innerHTML; }
+
+  function render() {
+    if (!state.loaded) { root.innerHTML = '<div class="loading-note">กำลังโหลดข้อมูล...</div>'; return; }
+    const curKey = monthKey(state.year, state.monthIndex);
+    const buddhistYear = state.year + 543;
+
+    let monthGridHTML = "";
+    for (let i = 0; i < 12; i++) {
+      const mk = monthKey(state.year, i);
+      const prog = monthProgress(mk);
+      const active = i === state.monthIndex;
+      monthGridHTML += `
+        <div class="month-pill ${active ? 'active' : ''}" data-month-idx="${i}">
+          <span class="m-name">${THAI_MONTHS[i]}</span>
+          <div class="m-bar"><div class="m-bar-fill" style="width:${prog.pct}%"></div></div>
+          <span class="m-count">${prog.total ? prog.total + " งาน" : "—"}</span>
+        </div>`;
+    }
+
+    const monthTotal = tasksForMonth(curKey).length;
+
+    function columnHTML(status, dotClass) {
+      const list = tasksForMonth(curKey).filter(t => t.status === status);
+      let cards = list.map(t => {
+        const canLeft = t.status !== "pending";
+        const canRight = t.status !== "done";
+        return `
+          <div class="task-card ${t.status}">
+            <div class="task-text">${escapeHTML(t.text)}</div>
+            <div class="task-actions">
+              <div class="move-btns">
+                ${canLeft ? `<button data-move="-1" data-id="${t.id}">←</button>` : ""}
+                ${canRight ? `<button data-move="1" data-id="${t.id}">→</button>` : ""}
+              </div>
+              <button class="del-btn" data-del="${t.id}">ลบ</button>
+            </div>
+          </div>`;
+      }).join("");
+      if (!cards) cards = `<div class="empty-hint">ยังไม่มีงานในหมวดนี้</div>`;
+      return `
+        <div class="col">
+          <div class="col-head">
+            <div class="col-label"><span class="dot ${dotClass}"></span>${STATUS_LABEL[status]}</div>
+            <span class="col-count">${list.length}</span>
+          </div>
+          <div class="add-row">
+            <input type="text" placeholder="เพิ่มงาน..." data-add-input="${status}" />
+            <button data-add-btn="${status}">+</button>
+          </div>
+          <div class="task-list">${cards}</div>
+        </div>`;
+    }
+
+    root.innerHTML = `
+      <div class="header-row">
+        <div class="title">สมุด<span>งาน</span>รายเดือน</div>
+        <div class="year-nav">
+          <button data-year="-1">‹</button>
+          ปี ${buddhistYear}
+          <button data-year="1">›</button>
+        </div>
+      </div>
+      <div class="line-badge ${state.lineConnected ? 'on' : ''}">
+        <span class="b-dot"></span>
+        ${state.lineConnected ? 'เชื่อมต่อ LINE แล้ว — พิมพ์ข้อความใน LINE เพื่อเพิ่มงาน' : 'ยังไม่เชื่อมต่อ LINE — เพิ่มบอทเป็นเพื่อนแล้วพิมพ์ทักไปครั้งนึง'}
+      </div>
+      <div class="month-grid">${monthGridHTML}</div>
+      <div class="month-heading">
+        ${THAI_MONTHS_FULL[state.monthIndex]} ${buddhistYear}
+        <span class="stamp-total">รวม ${monthTotal} งาน</span>
+      </div>
+      <div class="columns">
+        ${columnHTML("pending", "pending")}
+        ${columnHTML("doing", "doing")}
+        ${columnHTML("done", "done")}
+      </div>
+    `;
+    bindEvents();
+  }
+
+  function bindEvents() {
+    root.querySelectorAll('[data-month-idx]').forEach(el => el.addEventListener('click', () => { state.monthIndex = parseInt(el.getAttribute('data-month-idx'), 10); render(); }));
+    root.querySelectorAll('[data-year]').forEach(el => el.addEventListener('click', () => { state.year += parseInt(el.getAttribute('data-year'), 10); render(); }));
+    root.querySelectorAll('[data-add-btn]').forEach(el => el.addEventListener('click', () => {
+      const status = el.getAttribute('data-add-btn');
+      const input = root.querySelector(`[data-add-input="${status}"]`);
+      addTask(monthKey(state.year, state.monthIndex), status, input.value);
+      input.value = "";
+    }));
+    root.querySelectorAll('[data-add-input]').forEach(el => el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const status = el.getAttribute('data-add-input');
+        addTask(monthKey(state.year, state.monthIndex), status, el.value);
+        el.value = "";
+      }
+    }));
+    root.querySelectorAll('[data-move]').forEach(el => el.addEventListener('click', () => moveTask(el.getAttribute('data-id'), parseInt(el.getAttribute('data-move'), 10))));
+    root.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', () => deleteTask(el.getAttribute('data-del'))));
+  }
+
+  loadAll();
+  setInterval(loadAll, 15000); // ดึงข้อมูลใหม่ทุก 15 วิ เผื่อมีงานเพิ่มจาก LINE
+})();
+</script>
+</body>
+</html>
