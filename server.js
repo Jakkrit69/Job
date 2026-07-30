@@ -192,7 +192,7 @@ async function handleLineEvent(event) {
       status = word === 'ค้าง' ? 'pending' : word === 'กำลังทำ' ? 'doing' : 'done';
       rest = statusMatch[2].trim();
     }
-    const task = { id: newId(), text: rest, status, monthKey: mKey };
+    const task = { id: newId(), text: rest, status, monthKey: mKey, order: Date.now() };
     data.tasks.push(task);
     saveData(data);
     return client.replyMessage(event.replyToken, {
@@ -202,7 +202,7 @@ async function handleLineEvent(event) {
   }
 
   // ----- ข้อความอื่นๆ ทั้งหมด: เพิ่มเป็นงานค้างใหม่ของเดือนปัจจุบัน -----
-  const task = { id: newId(), text, status: 'pending', monthKey: curKey };
+  const task = { id: newId(), text, status: 'pending', monthKey: curKey, order: Date.now() };
   data.tasks.push(task);
   saveData(data);
 
@@ -229,6 +229,7 @@ app.post('/api/tasks', (req, res) => {
     text: text.trim(),
     status: status || 'pending',
     monthKey: monthKey || currentMonthKey(),
+    order: Date.now(),
   };
   data.tasks.push(task);
   saveData(data);
@@ -248,6 +249,18 @@ app.patch('/api/tasks/:id', (req, res) => {
 app.delete('/api/tasks/:id', (req, res) => {
   const data = loadData();
   data.tasks = data.tasks.filter((t) => t.id !== req.params.id);
+  saveData(data);
+  res.json({ ok: true });
+});
+
+app.post('/api/tasks/reorder', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  const data = loadData();
+  ids.forEach((id, idx) => {
+    const t = data.tasks.find((t) => t.id === id);
+    if (t) t.order = idx;
+  });
   saveData(data);
   res.json({ ok: true });
 });
