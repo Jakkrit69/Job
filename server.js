@@ -104,7 +104,8 @@ async function handleLineEvent(event) {
       text:
         'สวัสดีครับ 👋 นี่คือคำสั่งที่ใช้ได้:\n\n' +
         '• พิมพ์ข้อความอะไรก็ได้ → เพิ่มเป็นงาน "ค้าง" ของเดือนนี้\n' +
-        '• "เดือน 8 ซื้อของขวัญ" → เพิ่มงานลงเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
+        '• "เดือน 8 ซื้อของขวัญ" → เพิ่มงานค้างลงเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
+        '• "เดือน 8 กำลังทำ ซื้อของขวัญ" → เพิ่มงานลงเดือนสิงหาคม พร้อมระบุหมวดเลย (ค้าง / กำลังทำ / เสร็จแล้ว)\n' +
         '• "รายการ" → ดูรายการงานของเดือนนี้ พร้อมเลขกำกับ\n' +
         '• "ทำ 2" → ขยับสถานะงานหมายเลข 2 ไปข้างหน้า\n' +
         '• "ย้อน 2" → ขยับสถานะงานหมายเลข 2 ย้อนกลับ\n' +
@@ -173,23 +174,30 @@ async function handleLineEvent(event) {
     return client.replyMessage(event.replyToken, { type: 'text', text: `ลบแล้ว: "${task.text}"` });
   }
 
-  // ----- "เดือน X ข้อความ" : เพิ่มงานลงเดือนอื่น -----
+  // ----- "เดือน X ข้อความ" หรือ "เดือน X สถานะ ข้อความ" : เพิ่มงานลงเดือนอื่น -----
   m = text.match(/^เดือน\s+(\S+)\s+(.+)$/s);
   if (m) {
     const mKey = parseMonthToken(m[1]);
-    const taskText = m[2].trim();
+    let rest = m[2].trim();
     if (!mKey) {
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: 'ไม่เข้าใจชื่อเดือนครับ ลองพิมพ์เป็นเลข 1-12 เช่น "เดือน 8 ซื้อของขวัญ" หรือชื่อเดือนเต็ม เช่น "เดือน สิงหาคม ซื้อของขวัญ"',
       });
     }
-    const task = { id: newId(), text: taskText, status: 'pending', monthKey: mKey };
+    let status = 'pending';
+    const statusMatch = rest.match(/^["']?(ค้าง|กำลังทำ|เสร็จแล้ว|เสร็จ)["']?\s+(.+)$/s);
+    if (statusMatch) {
+      const word = statusMatch[1];
+      status = word === 'ค้าง' ? 'pending' : word === 'กำลังทำ' ? 'doing' : 'done';
+      rest = statusMatch[2].trim();
+    }
+    const task = { id: newId(), text: rest, status, monthKey: mKey };
     data.tasks.push(task);
     saveData(data);
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `✅ เพิ่มงานแล้ว: "${taskText}"\nหมวด: ค้าง (${monthLabel(mKey)})`,
+      text: `✅ เพิ่มงานแล้ว: "${rest}"\nหมวด: ${STATUS_LABEL[status]} (${monthLabel(mKey)})`,
     });
   }
 
