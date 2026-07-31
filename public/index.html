@@ -378,6 +378,7 @@ html, body {
   overflow: hidden;
 }
 .lp-note-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.lp-note-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .lp-stats-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 0 4px; }
 .lp-stat-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
 .lp-stat-pct { font-size: 10px; font-family: 'JetBrains Mono', monospace; color: var(--ink-soft); margin-bottom: 4px; }
@@ -415,7 +416,7 @@ html, body {
   const now = new Date();
   let state = {
     year: now.getFullYear(), monthIndex: now.getMonth(), tasks: [], lineConnected: false, loaded: false,
-    editingId: null, searchQuery: '', view: 'board', notes: [], expanded: {},
+    editingId: null, searchQuery: '', view: 'board', notes: [], expanded: {}, editingNoteId: null,
   };
 
   const root = document.getElementById('lp-root');
@@ -586,11 +587,27 @@ html, body {
 
     function notesHTML() {
       const notesSorted = state.notes.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      let items = notesSorted.map(n => `
+      let items = notesSorted.map(n => {
+        const isEditing = state.editingNoteId === n.id;
+        const bodyHTML = isEditing
+          ? `<div class="lp-edit-row">
+               <input type="text" class="lp-edit-input" data-note-edit-input="${n.id}" value="${escapeAttr(n.text)}" />
+               <button data-note-edit-save="${n.id}">✓</button>
+               <button data-note-edit-cancel="${n.id}">✕</button>
+             </div>`
+          : noteBlockHTML(n.text, 'note:' + n.id);
+        const actionsHTML = isEditing
+          ? ""
+          : `<div class="lp-note-actions">
+               <button class="lp-icon-btn" data-note-edit-btn="${n.id}" title="แก้ไขบันทึก">✏️</button>
+               <button class="lp-del-btn" data-del-note="${n.id}">ลบ</button>
+             </div>`;
+        return `
         <div class="lp-note-card" data-note-id="${n.id}">
-          <div class="lp-note-text">${noteBlockHTML(n.text, 'note:' + n.id)}</div>
-          <button class="lp-del-btn" data-del-note="${n.id}">ลบ</button>
-        </div>`).join("");
+          <div class="lp-note-text">${bodyHTML}</div>
+          ${actionsHTML}
+        </div>`;
+      }).join("");
       if (!items) items = `<div class="lp-empty-hint">ยังไม่มีบันทึกเลย ลองพิมพ์เพิ่มด้านบนดูครับ</div>`;
       return `
         <div class="lp-notes-panel">
@@ -763,6 +780,22 @@ html, body {
       state.expanded[key] = !state.expanded[key];
       render();
     }));
+    root.querySelectorAll('[data-note-edit-btn]').forEach(el => el.addEventListener('click', () => {
+      state.editingNoteId = el.getAttribute('data-note-edit-btn');
+      render();
+      const input = root.querySelector(`[data-note-edit-input="${state.editingNoteId}"]`);
+      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    }));
+    root.querySelectorAll('[data-note-edit-cancel]').forEach(el => el.addEventListener('click', () => { state.editingNoteId = null; render(); }));
+    root.querySelectorAll('[data-note-edit-save]').forEach(el => el.addEventListener('click', () => {
+      const id = el.getAttribute('data-note-edit-save');
+      const input = root.querySelector(`[data-note-edit-input="${id}"]`);
+      saveNoteEdit(id, input.value);
+    }));
+    root.querySelectorAll('[data-note-edit-input]').forEach(el => el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveNoteEdit(el.getAttribute('data-note-edit-input'), el.value);
+      if (e.key === 'Escape') { state.editingNoteId = null; render(); }
+    }));
   }
 
   async function saveTaskEdit(id, newText) {
@@ -845,6 +878,18 @@ html, body {
     state.notes = state.notes.filter(n => n.id !== id);
     render();
     await fetch('/api/notes/' + id, { method: 'DELETE' });
+  }
+
+  async function saveNoteEdit(id, newText) {
+    if (!newText || !newText.trim()) return;
+    const n = state.notes.find(n => n.id === id);
+    if (n) n.text = newText.trim();
+    state.editingNoteId = null;
+    render();
+    await fetch('/api/notes/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: newText.trim() }),
+    });
   }
 
   // ---------- ลากจัดลำดับ ----------
