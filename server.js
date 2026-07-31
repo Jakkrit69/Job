@@ -134,7 +134,7 @@ async function handleLineEvent(event) {
     return Promise.resolve(null);
   }
 
-  const text = event.message.text.trim();
+  const text = event.message.text.trim().normalize('NFC');
   const curKey = currentMonthKey();
 
   // ----- "รายการ" : แสดงรายการงานของเดือนนี้ พร้อมจำลำดับไว้ใช้อ้างอิง -----
