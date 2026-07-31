@@ -4,11 +4,11 @@ const line = require('@line/bot-sdk');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
-const { normalizeThai, parseMonthToken, parseCommand, STATUS_LABEL, STATUS_ORDER, THAI_MONTHS_FULL } = require('./commands');
+const { normalizeThai, parseMonthToken, parseCommand, resolveIndexed, STATUS_LABEL, STATUS_ORDER, THAI_MONTHS_FULL } = require('./commands');
 
 // เพิ่มตัวเลขนี้ทุกครั้งที่แก้ server.js/commands.js — ใช้เช็คว่า deploy โค้ดล่าสุดจริงหรือยัง
 // เช็คได้ที่ GET /api/version หรือพิมพ์ "เวอร์ชัน" ใน LINE
-const BUILD_VERSION = 'v10-2026-07-31-autolist-help';
+const BUILD_VERSION = 'v11-2026-07-31-stale-ref-fix';
 
 let DATA_DIR = process.env.DATA_DIR || '/data';
 try {
@@ -135,19 +135,15 @@ async function handleLineEvent(event) {
   const action = parseCommand(event.message.text, new Date());
 
   function findByLastList(idx) {
-    if (!data.lastList || data.lastList.length === 0) {
-      const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
-      data.lastList = monthTasks.map((t) => t.id);
-    }
-    const taskId = data.lastList[idx];
-    return data.tasks.find((t) => t.id === taskId);
+    const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
+    const { item, list } = resolveIndexed(data.lastList, monthTasks, idx);
+    data.lastList = list;
+    return item;
   }
   function findNoteByLastList(idx) {
-    if (!data.lastNoteList || data.lastNoteList.length === 0) {
-      data.lastNoteList = data.notes.map((n) => n.id);
-    }
-    const noteId = data.lastNoteList[idx];
-    return data.notes.find((n) => n.id === noteId);
+    const { item, list } = resolveIndexed(data.lastNoteList, data.notes, idx);
+    data.lastNoteList = list;
+    return item;
   }
   function notFoundReply() {
     return client.replyMessage(event.replyToken, {

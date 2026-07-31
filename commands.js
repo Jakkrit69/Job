@@ -157,6 +157,25 @@ function parseCommand(rawText, refDate) {
   };
 }
 
+// หาไอเทม (งาน/บันทึก) จากเลขอ้างอิงล่าสุดที่จำไว้ (refList) ตาม index ที่ผู้ใช้พิมพ์
+// ถ้าหาไม่เจอ (ยังไม่เคยพิมพ์ "รายการ"/"ดูโน้ต" เลย หรือรายการเก่าไม่ตรงกับข้อมูลปัจจุบันแล้ว
+// เช่น ไอเทมที่เคยอ้างอิงไว้ถูกลบไปแล้ว) จะสร้างรายการอ้างอิงใหม่จากข้อมูลปัจจุบันแล้วลองอีกครั้งให้อัตโนมัติ
+// คืนค่า { item, list } — list คือรายการอ้างอิงที่ควรบันทึกกลับไว้ใช้ครั้งถัดไป
+function resolveIndexed(refList, items, idx) {
+  const tryResolve = (list) => {
+    const refId = list && list[idx];
+    if (refId === undefined) return undefined;
+    return items.find((it) => it.id === refId);
+  };
+  let item = tryResolve(refList);
+  let list = refList;
+  if (!item) {
+    list = items.map((it) => it.id);
+    item = tryResolve(list);
+  }
+  return { item, list };
+}
+
 module.exports = {
   THAI_MONTHS_FULL,
   THAI_MONTHS_SHORT,
@@ -165,4 +184,5 @@ module.exports = {
   normalizeThai,
   parseMonthToken,
   parseCommand,
+  resolveIndexed,
 };
