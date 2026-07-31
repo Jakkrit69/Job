@@ -62,6 +62,12 @@ function shiftMonthKey(mKey, delta) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
 }
 
+function normalizeThai(str) {
+  // JS .normalize('NFC') ไม่ครอบคลุมสระ "ำ" ภาษาไทย ต้องแปลงเอง:
+  // บางคีย์บอร์ดพิมพ์เป็นนิคหิต (U+0E4D) + สระอา (U+0E32) แยกกัน แทนที่จะเป็นสระอำ (U+0E33) ตัวเดียว
+  return str.normalize('NFC').replace(/\u0E4D\u0E32/g, '\u0E33');
+}
+
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -134,7 +140,7 @@ async function handleLineEvent(event) {
     return Promise.resolve(null);
   }
 
-  const text = event.message.text.trim().normalize('NFC');
+  const text = normalizeThai(event.message.text.trim());
   const curKey = currentMonthKey();
 
   // ----- "รายการ" : แสดงรายการงานของเดือนนี้ พร้อมจำลำดับไว้ใช้อ้างอิง -----
