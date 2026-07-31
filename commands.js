@@ -98,6 +98,10 @@ function parseCommand(rawText, refDate) {
   if (m) {
     return { type: 'deleteNote', index: parseInt(m[1], 10) - 1 };
   }
+  m = text.match(/^แก้ไขโน้ต\s+(\d+)\s+(.+)$/s);
+  if (m) {
+    return { type: 'editNote', index: parseInt(m[1], 10) - 1, text: m[2].trim() };
+  }
   m = text.match(/^จด\s+(.+)$/s);
   if (m) {
     return { type: 'addNote', text: m[1].trim() };

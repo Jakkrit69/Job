@@ -107,7 +107,8 @@ const WELCOME_MESSAGE =
   '📝 สมุดบันทึกทั่วไป (ไม่ผูกกับงานไหน):\n' +
   '• "จด ข้อความ" → เพิ่มบันทึกใหม่\n' +
   '• "ดูโน้ต" → ดูบันทึกทั้งหมด พร้อมเลขกำกับ\n' +
-  '• "ลบโน้ต 2" → ลบบันทึกหมายเลข 2\n\n' +
+  '• "ลบโน้ต 2" → ลบบันทึกหมายเลข 2\n' +
+  '• "แก้ไขโน้ต 2 ข้อความใหม่" → แก้บันทึกหมายเลข 2\n\n' +
   '(เลขที่ใช้อ้างอิงกับงาน จะยึดตามรายการล่าสุดที่พิมพ์ "รายการ" ดูก่อนเสมอ ส่วนเลขบันทึกยึดตาม "ดูโน้ต" ล่าสุด)';
 
 async function handleLineEvent(event) {
@@ -282,6 +283,18 @@ async function handleLineEvent(event) {
       return client.replyMessage(event.replyToken, { type: 'text', text: `ลบบันทึกแล้ว: "${note.text}"` });
     }
 
+    case 'editNote': {
+      const note = findNoteByLastList(action.index);
+      if (!note) return noteNotFoundReply();
+      const oldText = note.text;
+      note.text = action.text;
+      saveData(data);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: `แก้ไขบันทึกแล้ว: "${oldText}" → "${note.text}"`,
+      });
+    }
+
     case 'monthError': {
       return client.replyMessage(event.replyToken, {
         type: 'text',
@@ -405,6 +418,15 @@ app.delete('/api/notes/:id', (req, res) => {
   data.notes = data.notes.filter((n) => n.id !== req.params.id);
   saveData(data);
   res.json({ ok: true });
+});
+
+app.patch('/api/notes/:id', (req, res) => {
+  const data = loadData();
+  const note = data.notes.find((n) => n.id === req.params.id);
+  if (!note) return res.status(404).json({ error: 'not found' });
+  if (req.body.text) note.text = req.body.text;
+  saveData(data);
+  res.json(note);
 });
 
 app.get('/api/status', (req, res) => {
