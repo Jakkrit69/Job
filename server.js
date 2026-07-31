@@ -6,6 +6,10 @@ const path = require('path');
 const cron = require('node-cron');
 const { normalizeThai, parseMonthToken, parseCommand, STATUS_LABEL, STATUS_ORDER, THAI_MONTHS_FULL } = require('./commands');
 
+// เพิ่มตัวเลขนี้ทุกครั้งที่แก้ server.js/commands.js — ใช้เช็คว่า deploy โค้ดล่าสุดจริงหรือยัง
+// เช็คได้ที่ GET /api/version หรือพิมพ์ "เวอร์ชัน" ใน LINE
+const BUILD_VERSION = 'v10-2026-07-31-autolist-help';
+
 let DATA_DIR = process.env.DATA_DIR || '/data';
 try {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -161,6 +165,10 @@ async function handleLineEvent(event) {
   switch (action.type) {
     case 'help': {
       return client.replyMessage(event.replyToken, { type: 'text', text: WELCOME_MESSAGE });
+    }
+
+    case 'version': {
+      return client.replyMessage(event.replyToken, { type: 'text', text: `🔧 เวอร์ชันปัจจุบัน: ${BUILD_VERSION}` });
     }
 
     case 'list': {
@@ -439,6 +447,10 @@ app.patch('/api/notes/:id', (req, res) => {
   if (req.body.text) note.text = req.body.text;
   saveData(data);
   res.json(note);
+});
+
+app.get('/api/version', (req, res) => {
+  res.json({ version: BUILD_VERSION });
 });
 
 app.get('/api/status', (req, res) => {

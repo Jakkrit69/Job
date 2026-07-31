@@ -60,6 +60,10 @@ function parseCommand(rawText, refDate) {
     return { type: 'help' };
   }
 
+  if (text === 'เวอร์ชัน' || text.toLowerCase() === 'version') {
+    return { type: 'version' };
+  }
+
   if (text === 'รายการ' || text.toLowerCase() === 'list') {
     return { type: 'list', monthKey: null }; // null = ใช้เดือนปัจจุบัน
   }
