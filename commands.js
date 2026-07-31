@@ -14,9 +14,11 @@ const THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
 // - .normalize('NFC') มาตรฐาน Unicode (ไม่ครอบคลุมสระอำภาษาไทย)
 // - แปลงนิคหิต+สระอา (โค้ดคนละตัวที่บางคีย์บอร์ดพิมพ์) ให้เป็นสระอำตัวเดียว
 // - แปลงเลขไทย ๐-๙ เป็นเลขอารบิก
+// - แปลง "โน๊ต" (ไม้ตรี) ให้เป็น "โน้ต" (ไม้โท) — คนละรหัสแต่คนไทยใช้สะกดคำว่า note สลับกันทั้งคู่
 function normalizeThai(str) {
   let s = String(str).normalize('NFC').replace(/\u0E4D\u0E32/g, '\u0E33');
   s = s.replace(/[๐-๙]/g, (d) => String(THAI_DIGITS.indexOf(d)));
+  s = s.replace(/โน๊ต/g, 'โน้ต');
   return s;
 }
 
