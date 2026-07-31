@@ -56,6 +56,10 @@ function parseMonthToken(token, refDate) {
 function parseCommand(rawText, refDate) {
   const text = normalizeThai(String(rawText).trim());
 
+  if (text === 'คำสั่ง' || text === 'เมนู' || text.toLowerCase() === 'help') {
+    return { type: 'help' };
+  }
+
   if (text === 'รายการ' || text.toLowerCase() === 'list') {
     return { type: 'list', monthKey: null }; // null = ใช้เดือนปัจจุบัน
   }

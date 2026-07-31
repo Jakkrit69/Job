@@ -89,7 +89,7 @@ app.post('/webhook', line.middleware(lineConfig), (req, res) => {
 });
 
 const WELCOME_MESSAGE =
-  'สวัสดีครับ 👋 นี่คือคำสั่งที่ใช้ได้:\n\n' +
+  'สวัสดีครับ 👋 นี่คือคำสั่งที่ใช้ได้ (พิมพ์ "คำสั่ง" เมื่อไหร่ก็ได้เพื่อดูรายการนี้อีกครั้ง):\n\n' +
   '• พิมพ์ข้อความอะไรก็ได้ → เพิ่มเป็นงาน "ค้าง" ของเดือนนี้\n' +
   '• "เดือน 8 ซื้อของขวัญ" → เพิ่มงานค้างลงเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
   '• "เดือน 8 กำลังทำ ซื้อของขวัญ" → เพิ่มงานลงเดือนสิงหาคม พร้อมระบุหมวดเลย (ค้าง / กำลังทำ / เสร็จแล้ว)\n' +
@@ -131,10 +131,17 @@ async function handleLineEvent(event) {
   const action = parseCommand(event.message.text, new Date());
 
   function findByLastList(idx) {
+    if (!data.lastList || data.lastList.length === 0) {
+      const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
+      data.lastList = monthTasks.map((t) => t.id);
+    }
     const taskId = data.lastList[idx];
     return data.tasks.find((t) => t.id === taskId);
   }
   function findNoteByLastList(idx) {
+    if (!data.lastNoteList || data.lastNoteList.length === 0) {
+      data.lastNoteList = data.notes.map((n) => n.id);
+    }
     const noteId = data.lastNoteList[idx];
     return data.notes.find((n) => n.id === noteId);
   }
@@ -152,6 +159,10 @@ async function handleLineEvent(event) {
   }
 
   switch (action.type) {
+    case 'help': {
+      return client.replyMessage(event.replyToken, { type: 'text', text: WELCOME_MESSAGE });
+    }
+
     case 'list': {
       const targetKey = action.monthKey || curKey;
       const monthTasks = data.tasks.filter((t) => t.monthKey === targetKey);
