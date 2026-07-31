@@ -40,10 +40,17 @@ function parseCommand(rawText, refDate) {
   const text = normalizeThai(String(rawText).trim());
 
   if (text === 'รายการ' || text.toLowerCase() === 'list') {
-    return { type: 'list' };
+    return { type: 'list', monthKey: null }; // null = ใช้เดือนปัจจุบัน
   }
 
-  let m = text.match(/^(ทำ|ย้อน)\s+(\d+)$/);
+  let m = text.match(/^รายการ\s*(\d{1,2})$/) || text.match(/^รายการ\s+(\S+)$/);
+  if (m) {
+    const mKey = parseMonthToken(m[1], refDate);
+    if (!mKey) return { type: 'listMonthError' };
+    return { type: 'list', monthKey: mKey };
+  }
+
+  m = text.match(/^(ทำ|ย้อน)\s+(\d+)$/);
   if (m) {
     return { type: 'move', dir: m[1] === 'ทำ' ? 1 : -1, index: parseInt(m[2], 10) - 1 };
   }

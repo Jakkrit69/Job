@@ -94,6 +94,7 @@ const WELCOME_MESSAGE =
   '• "เดือน 8 ซื้อของขวัญ" → เพิ่มงานค้างลงเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
   '• "เดือน 8 กำลังทำ ซื้อของขวัญ" → เพิ่มงานลงเดือนสิงหาคม พร้อมระบุหมวดเลย (ค้าง / กำลังทำ / เสร็จแล้ว)\n' +
   '• "รายการ" → ดูรายการงานของเดือนนี้ พร้อมเลขกำกับ\n' +
+  '• "รายการ 8" → ดูรายการงานของเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
   '• "ทำ 2" → ขยับสถานะงานหมายเลข 2 ไปข้างหน้า\n' +
   '• "ย้อน 2" → ขยับสถานะงานหมายเลข 2 ย้อนกลับ\n' +
   '• "ลบ 2" → ลบงานหมายเลข 2\n' +
@@ -151,10 +152,18 @@ async function handleLineEvent(event) {
 
   switch (action.type) {
     case 'list': {
-      const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
+      const targetKey = action.monthKey || curKey;
+      const monthTasks = data.tasks.filter((t) => t.monthKey === targetKey);
       data.lastList = monthTasks.map((t) => t.id);
       saveData(data);
-      return client.replyMessage(event.replyToken, { type: 'text', text: formatTaskList(monthTasks, curKey) });
+      return client.replyMessage(event.replyToken, { type: 'text', text: formatTaskList(monthTasks, targetKey) });
+    }
+
+    case 'listMonthError': {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'ไม่เข้าใจชื่อเดือนครับ ลองพิมพ์เป็นเลข 1-12 เช่น "รายการ 8" หรือชื่อเดือนเต็ม เช่น "รายการ สิงหาคม"',
+      });
     }
 
     case 'move': {
