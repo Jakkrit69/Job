@@ -247,6 +247,108 @@ html, body {
 .lp-empty-hint { font-size: 11px; color: var(--ink-soft); font-style: italic; padding: 6px 2px; }
 .lp-loading { text-align: center; padding: 40px 0; color: #fff; font-family: 'Sarabun', sans-serif; text-shadow: 0 1px 6px rgba(0,0,0,0.4); }
 
+.lp-right-actions { display: flex; align-items: center; gap: 4px; }
+.lp-icon-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.lp-icon-btn.active { background: var(--gold); border-color: var(--gold-deep); }
+.lp-right-actions { flex-wrap: wrap; row-gap: 4px; }
+.lp-deadline { font-size: 10.5px; color: var(--doing); margin-top: 3px; }
+.lp-deadline.overdue { color: var(--rose); font-weight: 600; }
+.lp-edit-row { display: flex; gap: 5px; align-items: center; }
+.lp-edit-input {
+  flex: 1;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 12.5px;
+  font-family: 'Sarabun', sans-serif;
+}
+.lp-edit-row button {
+  border: none;
+  border-radius: 5px;
+  font-size: 11px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.lp-edit-row button[data-edit-save] { background: var(--sage); color: #fff; }
+.lp-edit-row button[data-edit-cancel] { background: var(--line); color: var(--ink); }
+
+.lp-toprow { flex-wrap: wrap; row-gap: 8px; }
+.lp-search-wrap { position: relative; flex: 1; min-width: 160px; max-width: 260px; }
+.lp-search-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--card-solid);
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-family: 'Sarabun', sans-serif;
+  color: var(--ink);
+}
+.lp-search-input:focus { outline: 2px solid var(--gold); }
+.lp-search-results {
+  position: absolute;
+  top: 110%;
+  left: 0;
+  right: 0;
+  background: var(--card-solid);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 20;
+  box-shadow: 0 10px 24px rgba(30,50,60,0.18);
+}
+.lp-search-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 7px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.lp-search-item:hover { background: var(--paper); }
+.lp-search-text { flex: 1; }
+.lp-search-month { font-size: 10.5px; color: var(--ink-soft); }
+
+.lp-toggle-btn {
+  border: 1px solid var(--line);
+  background: var(--card-solid);
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: 'Kanit', sans-serif;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.lp-export-btn {
+  font-size: 11px;
+  font-family: 'Sarabun', sans-serif;
+  color: var(--ink-soft);
+  border: 1px dashed var(--ink-soft);
+  border-radius: 20px;
+  padding: 2px 10px;
+  text-decoration: none;
+  margin-left: 6px;
+}
+
+.lp-stats-title { font-family: 'Kanit', sans-serif; font-size: 15px; margin-bottom: 14px; }
+.lp-stats-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 0 4px; }
+.lp-stat-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+.lp-stat-pct { font-size: 10px; font-family: 'JetBrains Mono', monospace; color: var(--ink-soft); margin-bottom: 4px; }
+.lp-stat-bar-wrap { width: 100%; height: 110px; display: flex; align-items: flex-end; }
+.lp-stat-bar { width: 100%; background: var(--sage); border-radius: 5px 5px 0 0; min-height: 2px; }
+.lp-stat-label { font-size: 10.5px; margin-top: 6px; color: var(--ink-soft); }
+
 .lp-line-badge {
   display: inline-flex;
   align-items: center;
@@ -275,7 +377,10 @@ html, body {
   const THAI_MONTHS_FULL = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const STATUS_LABEL = { pending: "ค้าง", doing: "กำลังทำ", done: "เสร็จแล้ว" };
   const now = new Date();
-  let state = { year: now.getFullYear(), monthIndex: now.getMonth(), tasks: [], lineConnected: false, loaded: false };
+  let state = {
+    year: now.getFullYear(), monthIndex: now.getMonth(), tasks: [], lineConnected: false, loaded: false,
+    editingId: null, searchQuery: '', view: 'board',
+  };
 
   const root = document.getElementById('lp-root');
 
@@ -332,6 +437,22 @@ html, body {
   }
 
   function escapeHTML(str) { const d = document.createElement("div"); d.textContent = str; return d.innerHTML; }
+  function escapeAttr(str) { return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  function formatDeadline(d) {
+    const [y, m, day] = d.split('-').map(Number);
+    return `${day} ${THAI_MONTHS[m - 1]} ${y + 543}`;
+  }
+  function isOverdue(t) {
+    if (!t.deadline || t.status === 'done') return false;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const dl = new Date(t.deadline + 'T00:00:00');
+    return dl < today;
+  }
+  function monthLabelShort(mKey) {
+    const [y, m] = mKey.split('-').map(Number);
+    return `${THAI_MONTHS[m - 1]} ${y + 543}`;
+  }
 
   function render() {
     if (!state.loaded) {
@@ -361,17 +482,34 @@ html, body {
       let cards = list.map(t => {
         const canLeft = t.status !== "pending";
         const canRight = t.status !== "done";
+        const isEditing = state.editingId === t.id;
+        const deadlineHTML = t.deadline
+          ? `<div class="lp-deadline ${isOverdue(t) ? 'overdue' : ''}">⏰ ${formatDeadline(t.deadline)}</div>`
+          : "";
+        const bodyTopHTML = isEditing
+          ? `<div class="lp-edit-row">
+               <input type="text" class="lp-edit-input" data-edit-input="${t.id}" value="${escapeAttr(t.text)}" />
+               <button data-edit-save="${t.id}">✓</button>
+               <button data-edit-cancel="${t.id}">✕</button>
+             </div>`
+          : `<div class="lp-task-text">${escapeHTML(t.text)}</div>${deadlineHTML}`;
         return `
           <div class="lp-task-card ${t.status}" data-id="${t.id}">
             <div class="lp-drag-handle" data-drag="${t.id}">⠿</div>
             <div class="lp-task-body">
-              <div class="lp-task-text">${escapeHTML(t.text)}</div>
+              ${bodyTopHTML}
               <div class="lp-task-actions">
                 <div class="lp-move-btns">
                   ${canLeft ? `<button data-move="-1" data-id="${t.id}">←</button>` : ""}
                   ${canRight ? `<button data-move="1" data-id="${t.id}">→</button>` : ""}
                 </div>
-                <button class="lp-del-btn" data-del="${t.id}">ลบ</button>
+                <div class="lp-right-actions">
+                  <button class="lp-icon-btn ${t.carryOver ? 'active' : ''}" data-carry-btn="${t.id}" title="เลื่อนไปเดือนหน้าอัตโนมัติถ้ายังไม่เสร็จ">⏭️</button>
+                  <button class="lp-icon-btn ${t.recurring ? 'active' : ''}" data-recur-btn="${t.id}" title="งานประจำ สร้างซ้ำทุกเดือน">🔁</button>
+                  <button class="lp-icon-btn" data-deadline-btn="${t.id}" title="ตั้งวันครบกำหนด">📅</button>
+                  <button class="lp-icon-btn" data-edit-btn="${t.id}" title="แก้ไขข้อความ">✏️</button>
+                  <button class="lp-del-btn" data-del="${t.id}">ลบ</button>
+                </div>
               </div>
             </div>
           </div>`;
@@ -391,6 +529,44 @@ html, body {
         </div>`;
     }
 
+    function statsHTML() {
+      let bars = "";
+      for (let i = 0; i < 12; i++) {
+        const mk = monthKey(state.year, i);
+        const list = tasksForMonth(mk);
+        const total = list.length;
+        const done = list.filter(t => t.status === "done").length;
+        const pct = total ? Math.round((done / total) * 100) : 0;
+        bars += `
+          <div class="lp-stat-col">
+            <div class="lp-stat-pct">${total ? pct + "%" : "—"}</div>
+            <div class="lp-stat-bar-wrap"><div class="lp-stat-bar" style="height:${total ? Math.max(pct, 4) : 0}%"></div></div>
+            <div class="lp-stat-label">${THAI_MONTHS[i]}</div>
+          </div>`;
+      }
+      return `
+        <div class="lp-stats">
+          <div class="lp-stats-title">สรุปเปอร์เซ็นต์งานเสร็จรายเดือน — ปี ${buddhistYear}</div>
+          <div class="lp-stats-chart">${bars}</div>
+        </div>`;
+    }
+
+    function searchResultsHTML() {
+      const q = state.searchQuery.trim();
+      if (!q) return "";
+      const matches = state.tasks.filter(t => t.text.includes(q)).slice(0, 20);
+      if (matches.length === 0) {
+        return `<div class="lp-search-results"><div class="lp-empty-hint">ไม่พบงานที่ตรงกับ "${escapeHTML(q)}"</div></div>`;
+      }
+      const items = matches.map(t => `
+        <div class="lp-search-item" data-jump="${t.id}">
+          <span class="lp-dot ${t.status}"></span>
+          <span class="lp-search-text">${escapeHTML(t.text)}</span>
+          <span class="lp-search-month">${monthLabelShort(t.monthKey)}</span>
+        </div>`).join("");
+      return `<div class="lp-search-results">${items}</div>`;
+    }
+
     root.innerHTML = `
       <div class="lp-veil"></div>
       <div class="lp-inner">
@@ -408,17 +584,25 @@ html, body {
               ปี ${buddhistYear}
               <button data-year="1">›</button>
             </div>
+            <div class="lp-search-wrap">
+              <input type="text" class="lp-search-input" id="lp-search-input" placeholder="ค้นหางาน..." value="${escapeAttr(state.searchQuery)}" />
+              ${searchResultsHTML()}
+            </div>
+            <button class="lp-toggle-btn" data-toggle-view>${state.view === 'stats' ? '← กลับไปดูงาน' : '📊 ภาพรวมทั้งปี'}</button>
           </div>
+          ${state.view === 'stats' ? statsHTML() : `
           <div class="lp-month-grid">${monthGridHTML}</div>
           <div class="lp-month-heading">
             ${THAI_MONTHS_FULL[state.monthIndex]} ${buddhistYear}
             <span class="lp-total">รวม ${monthTotal} งาน</span>
+            <a class="lp-export-btn" href="/api/export?month=${curKey}" download>⬇️ Excel</a>
+            <a class="lp-export-btn" href="/api/backup/download" download>💾 สำรองข้อมูล</a>
           </div>
           <div class="lp-columns">
             ${columnHTML("pending", "pending")}
             ${columnHTML("doing", "doing")}
             ${columnHTML("done", "done")}
-          </div>
+          </div>`}
         </div>
       </div>
     `;
@@ -444,6 +628,99 @@ html, body {
     root.querySelectorAll('[data-move]').forEach(el => el.addEventListener('click', () => moveTask(el.getAttribute('data-id'), parseInt(el.getAttribute('data-move'), 10))));
     root.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', () => deleteTask(el.getAttribute('data-del'))));
     root.querySelectorAll('[data-drag]').forEach(el => el.addEventListener('pointerdown', onDragStart));
+
+    root.querySelectorAll('[data-edit-btn]').forEach(el => el.addEventListener('click', () => {
+      state.editingId = el.getAttribute('data-edit-btn');
+      render();
+      const input = root.querySelector(`[data-edit-input="${state.editingId}"]`);
+      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    }));
+    root.querySelectorAll('[data-edit-cancel]').forEach(el => el.addEventListener('click', () => { state.editingId = null; render(); }));
+    root.querySelectorAll('[data-edit-save]').forEach(el => el.addEventListener('click', () => {
+      const id = el.getAttribute('data-edit-save');
+      const input = root.querySelector(`[data-edit-input="${id}"]`);
+      saveTaskEdit(id, input.value);
+    }));
+    root.querySelectorAll('[data-edit-input]').forEach(el => el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveTaskEdit(el.getAttribute('data-edit-input'), el.value);
+      if (e.key === 'Escape') { state.editingId = null; render(); }
+    }));
+    root.querySelectorAll('[data-deadline-btn]').forEach(el => el.addEventListener('click', () => promptDeadline(el.getAttribute('data-deadline-btn'))));
+    root.querySelectorAll('[data-carry-btn]').forEach(el => el.addEventListener('click', () => toggleCarryOver(el.getAttribute('data-carry-btn'))));
+    root.querySelectorAll('[data-recur-btn]').forEach(el => el.addEventListener('click', () => toggleRecurring(el.getAttribute('data-recur-btn'))));
+
+    const searchInput = root.querySelector('#lp-search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        state.searchQuery = e.target.value;
+        render();
+        const el2 = root.querySelector('#lp-search-input');
+        if (el2) { el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); }
+      });
+    }
+    root.querySelectorAll('[data-jump]').forEach(el => el.addEventListener('click', () => {
+      const id = el.getAttribute('data-jump');
+      const t = state.tasks.find(t => t.id === id);
+      if (!t) return;
+      const [y, mo] = t.monthKey.split('-').map(Number);
+      state.year = y; state.monthIndex = mo - 1; state.searchQuery = ''; state.view = 'board';
+      render();
+    }));
+
+    const toggleBtn = root.querySelector('[data-toggle-view]');
+    if (toggleBtn) toggleBtn.addEventListener('click', () => { state.view = state.view === 'stats' ? 'board' : 'stats'; render(); });
+  }
+
+  async function saveTaskEdit(id, newText) {
+    if (!newText || !newText.trim()) return;
+    const t = state.tasks.find(t => t.id === id);
+    if (t) t.text = newText.trim();
+    state.editingId = null;
+    render();
+    await fetch('/api/tasks/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: newText.trim() }),
+    });
+  }
+
+  async function promptDeadline(id) {
+    const t = state.tasks.find(t => t.id === id);
+    if (!t) return;
+    const input = window.prompt('ใส่วันครบกำหนด รูปแบบ YYYY-MM-DD (เว้นว่างเพื่อลบวันครบกำหนด)', t.deadline || '');
+    if (input === null) return;
+    const val = input.trim();
+    if (val && !/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      alert('รูปแบบวันที่ไม่ถูกต้อง ต้องเป็น YYYY-MM-DD เช่น 2026-08-15');
+      return;
+    }
+    t.deadline = val || null;
+    render();
+    await fetch('/api/tasks/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deadline: t.deadline }),
+    });
+  }
+
+  async function toggleCarryOver(id) {
+    const t = state.tasks.find(t => t.id === id);
+    if (!t) return;
+    t.carryOver = !t.carryOver;
+    render();
+    await fetch('/api/tasks/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ carryOver: t.carryOver }),
+    });
+  }
+
+  async function toggleRecurring(id) {
+    const t = state.tasks.find(t => t.id === id);
+    if (!t) return;
+    t.recurring = !t.recurring;
+    render();
+    await fetch('/api/tasks/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recurring: t.recurring }),
+    });
   }
 
   // ---------- ลากจัดลำดับ ----------
