@@ -379,6 +379,20 @@ html, body {
 }
 .lp-note-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .lp-note-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.lp-note-num {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
 .lp-stats-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 0 4px; }
 .lp-stat-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
 .lp-stat-pct { font-size: 10px; font-family: 'JetBrains Mono', monospace; color: var(--ink-soft); margin-bottom: 4px; }
@@ -586,8 +600,8 @@ html, body {
     }
 
     function notesHTML() {
-      const notesSorted = state.notes.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      let items = notesSorted.map(n => {
+      const notesSorted = state.notes.slice().sort((a, b) => (a.order ?? a.createdAt ?? 0) - (b.order ?? b.createdAt ?? 0));
+      let items = notesSorted.map((n, i) => {
         const isEditing = state.editingNoteId === n.id;
         const bodyHTML = isEditing
           ? `<div class="lp-edit-row">
@@ -604,6 +618,8 @@ html, body {
              </div>`;
         return `
         <div class="lp-note-card" data-note-id="${n.id}">
+          <div class="lp-drag-handle" data-note-drag="${n.id}">⠿</div>
+          <div class="lp-note-num">${i + 1}</div>
           <div class="lp-note-text">${bodyHTML}</div>
           ${actionsHTML}
         </div>`;
@@ -720,6 +736,7 @@ html, body {
     root.querySelectorAll('[data-move]').forEach(el => el.addEventListener('click', () => moveTask(el.getAttribute('data-id'), parseInt(el.getAttribute('data-move'), 10))));
     root.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', () => deleteTask(el.getAttribute('data-del'))));
     root.querySelectorAll('[data-drag]').forEach(el => el.addEventListener('pointerdown', onDragStart));
+    root.querySelectorAll('[data-note-drag]').forEach(el => el.addEventListener('pointerdown', onDragStart));
 
     root.querySelectorAll('[data-edit-btn]').forEach(el => el.addEventListener('click', () => {
       state.editingId = el.getAttribute('data-edit-btn');
@@ -892,14 +909,17 @@ html, body {
     });
   }
 
-  // ---------- ลากจัดลำดับ ----------
+  // ---------- ลากจัดลำดับ (ใช้ร่วมกันทั้งงานและบันทึกทั่วไป) ----------
   let dragState = null;
 
   function onDragStart(e) {
     const handle = e.currentTarget;
-    const card = handle.closest('.lp-task-card');
+    const taskCard = handle.closest('.lp-task-card');
+    const noteCard = handle.closest('.lp-note-card');
+    const card = taskCard || noteCard;
+    const kind = taskCard ? 'task' : 'note';
     const list = card.parentElement;
-    dragState = { card, list };
+    dragState = { card, list, kind };
     card.classList.add('dragging');
     try { card.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
@@ -907,8 +927,9 @@ html, body {
 
   function onDragMove(e) {
     if (!dragState) return;
-    const { card, list } = dragState;
-    const siblings = [...list.querySelectorAll('.lp-task-card')].filter(el => el !== card);
+    const { card, list, kind } = dragState;
+    const selector = kind === 'note' ? '.lp-note-card' : '.lp-task-card';
+    const siblings = [...list.querySelectorAll(selector)].filter(el => el !== card);
     const y = e.clientY;
     let target = null;
     for (const sib of siblings) {
@@ -921,9 +942,26 @@ html, body {
 
   async function onDragEnd(e) {
     if (!dragState) return;
-    const { card, list } = dragState;
+    const { card, list, kind } = dragState;
     card.classList.remove('dragging');
     dragState = null;
+
+    if (kind === 'note') {
+      const ids = [...list.querySelectorAll('.lp-note-card')].map(el => el.getAttribute('data-note-id'));
+      ids.forEach((id, idx) => {
+        const n = state.notes.find(n => n.id === id);
+        if (n) n.order = idx;
+      });
+      render();
+      try {
+        await fetch('/api/notes/reorder', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+      } catch (err) {}
+      return;
+    }
+
     const ids = [...list.querySelectorAll('.lp-task-card')].map(el => el.getAttribute('data-id'));
     ids.forEach((id, idx) => {
       const t = state.tasks.find(t => t.id === id);
