@@ -81,24 +81,25 @@ function parseCommand(rawText, refDate) {
   }
 
   // ----- โน้ตแนบในงาน (ผูกกับงานที่มีเลขจากรายการล่าสุด) -----
-  m = text.match(/^โน้ตงาน\s+(\d+)\s+(.+)$/s);
+  // \s* ระหว่างคำ เผื่อคีย์บอร์ดมือถือแทรกช่องว่างให้เองตอน autocomplete เช่น "โน้ต งาน"
+  m = text.match(/^โน้ต\s*งาน\s+(\d+)\s+(.+)$/s);
   if (m) {
     return { type: 'taskNote', index: parseInt(m[1], 10) - 1, text: m[2].trim() };
   }
-  m = text.match(/^ลบโน้ตงาน\s+(\d+)$/);
+  m = text.match(/^ลบ\s*โน้ต\s*งาน\s+(\d+)$/);
   if (m) {
     return { type: 'clearTaskNote', index: parseInt(m[1], 10) - 1 };
   }
 
   // ----- สมุดบันทึกทั่วไป (ไม่ผูกกับงานไหน) -----
-  if (text === 'ดูโน้ต') {
+  if (/^ดู\s*โน้ต$/.test(text)) {
     return { type: 'listNotes' };
   }
-  m = text.match(/^ลบโน้ต\s+(\d+)$/);
+  m = text.match(/^ลบ\s*โน้ต\s+(\d+)$/);
   if (m) {
     return { type: 'deleteNote', index: parseInt(m[1], 10) - 1 };
   }
-  m = text.match(/^แก้ไขโน้ต\s+(\d+)\s+(.+)$/s);
+  m = text.match(/^แก้ไข\s*โน้ต\s+(\d+)\s+(.+)$/s);
   if (m) {
     return { type: 'editNote', index: parseInt(m[1], 10) - 1, text: m[2].trim() };
   }
