@@ -4,6 +4,7 @@ const line = require('@line/bot-sdk');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
+const { normalizeThai, parseMonthToken, parseCommand, STATUS_LABEL, STATUS_ORDER, THAI_MONTHS_FULL } = require('./commands');
 
 let DATA_DIR = process.env.DATA_DIR || '/data';
 try {
@@ -21,24 +22,18 @@ const lineConfig = {
 const client = new line.Client(lineConfig);
 const app = express();
 
-const THAI_MONTHS_FULL = [
-  "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
-  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
-];
-const THAI_MONTHS_SHORT = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-const STATUS_LABEL = { pending: "ค้าง", doing: "กำลังทำ", done: "เสร็จแล้ว" };
-const STATUS_ORDER = ["pending", "doing", "done"];
-
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    return { tasks: [], lineUserId: null, lastList: [] };
+    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [] };
   }
   try {
     const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     if (!d.lastList) d.lastList = [];
+    if (!d.notes) d.notes = [];
+    if (!d.lastNoteList) d.lastNoteList = [];
     return d;
   } catch (e) {
-    return { tasks: [], lineUserId: null, lastList: [] };
+    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [] };
   }
 }
 
@@ -62,29 +57,8 @@ function shiftMonthKey(mKey, delta) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
 }
 
-function normalizeThai(str) {
-  // JS .normalize('NFC') ไม่ครอบคลุมสระ "ำ" ภาษาไทย ต้องแปลงเอง:
-  // บางคีย์บอร์ดพิมพ์เป็นนิคหิต (U+0E4D) + สระอา (U+0E32) แยกกัน แทนที่จะเป็นสระอำ (U+0E33) ตัวเดียว
-  return str.normalize('NFC').replace(/\u0E4D\u0E32/g, '\u0E33');
-}
-
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
-
-// พยายามแปลงคำที่พิมพ์มา (ตัวเลข 1-12 หรือชื่อเดือนไทย) ให้เป็น monthKey ของปีปัจจุบัน
-function parseMonthToken(token) {
-  const now = new Date();
-  const year = now.getFullYear();
-  const n = parseInt(token, 10);
-  if (!isNaN(n) && n >= 1 && n <= 12) {
-    return year + "-" + String(n).padStart(2, "0");
-  }
-  const idxFull = THAI_MONTHS_FULL.findIndex((m) => token.startsWith(m) || m.startsWith(token));
-  if (idxFull !== -1) return year + "-" + String(idxFull + 1).padStart(2, "0");
-  const idxShort = THAI_MONTHS_SHORT.findIndex((m) => token.replace(/\./g, "") === m.replace(/\./g, ""));
-  if (idxShort !== -1) return year + "-" + String(idxShort + 1).padStart(2, "0");
-  return null;
 }
 
 function formatTaskList(tasks, mKey) {
@@ -98,6 +72,12 @@ function formatTaskList(tasks, mKey) {
   );
 }
 
+function formatNoteList(notes) {
+  if (notes.length === 0) return 'ยังไม่มีบันทึกเลยครับ พิมพ์ "จด ข้อความ" เพื่อเพิ่มบันทึกแรกได้เลย';
+  const lines = notes.map((n, i) => `${i + 1}. ${n.text}`).join('\n');
+  return `📝 บันทึกทั้งหมด\n${lines}\n\nพิมพ์ "ลบโน้ต เลข" เพื่อลบบันทึกนั้น`;
+}
+
 // ---------------- LINE webhook ----------------
 app.post('/webhook', line.middleware(lineConfig), (req, res) => {
   Promise.all(req.body.events.map(handleLineEvent))
@@ -108,6 +88,27 @@ app.post('/webhook', line.middleware(lineConfig), (req, res) => {
     });
 });
 
+const WELCOME_MESSAGE =
+  'สวัสดีครับ 👋 นี่คือคำสั่งที่ใช้ได้:\n\n' +
+  '• พิมพ์ข้อความอะไรก็ได้ → เพิ่มเป็นงาน "ค้าง" ของเดือนนี้\n' +
+  '• "เดือน 8 ซื้อของขวัญ" → เพิ่มงานค้างลงเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
+  '• "เดือน 8 กำลังทำ ซื้อของขวัญ" → เพิ่มงานลงเดือนสิงหาคม พร้อมระบุหมวดเลย (ค้าง / กำลังทำ / เสร็จแล้ว)\n' +
+  '• "รายการ" → ดูรายการงานของเดือนนี้ พร้อมเลขกำกับ\n' +
+  '• "ทำ 2" → ขยับสถานะงานหมายเลข 2 ไปข้างหน้า\n' +
+  '• "ย้อน 2" → ขยับสถานะงานหมายเลข 2 ย้อนกลับ\n' +
+  '• "ลบ 2" → ลบงานหมายเลข 2\n' +
+  '• "แก้ไข 2 ข้อความใหม่" → แก้ชื่องานหมายเลข 2\n' +
+  '• "กำหนด 2 2026-08-15" → ตั้งวันครบกำหนดของงานหมายเลข 2\n' +
+  '• "เลื่อน 2" → สลับให้งานหมายเลข 2 เลื่อนไปเดือนหน้าอัตโนมัติถ้ายังไม่เสร็จตอนสิ้นเดือน\n' +
+  '• "ประจำ 2" → สลับให้งานหมายเลข 2 เป็นงานประจำ สร้างซ้ำให้ทุกต้นเดือน\n' +
+  '• "โน้ตงาน 2 รายละเอียด" → แนบโน้ตไว้ในงานหมายเลข 2\n' +
+  '• "ลบโน้ตงาน 2" → ลบโน้ตที่แนบไว้ในงานหมายเลข 2\n\n' +
+  '📝 สมุดบันทึกทั่วไป (ไม่ผูกกับงานไหน):\n' +
+  '• "จด ข้อความ" → เพิ่มบันทึกใหม่\n' +
+  '• "ดูโน้ต" → ดูบันทึกทั้งหมด พร้อมเลขกำกับ\n' +
+  '• "ลบโน้ต 2" → ลบบันทึกหมายเลข 2\n\n' +
+  '(เลขที่ใช้อ้างอิงกับงาน จะยึดตามรายการล่าสุดที่พิมพ์ "รายการ" ดูก่อนเสมอ ส่วนเลขบันทึกยึดตาม "ดูโน้ต" ล่าสุด)';
+
 async function handleLineEvent(event) {
   const data = loadData();
 
@@ -117,210 +118,191 @@ async function handleLineEvent(event) {
   }
 
   if (event.type === 'follow') {
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text:
-        'สวัสดีครับ 👋 นี่คือคำสั่งที่ใช้ได้:\n\n' +
-        '• พิมพ์ข้อความอะไรก็ได้ → เพิ่มเป็นงาน "ค้าง" ของเดือนนี้\n' +
-        '• "เดือน 8 ซื้อของขวัญ" → เพิ่มงานค้างลงเดือนสิงหาคม (ใช้เลข 1-12 หรือชื่อเดือนก็ได้)\n' +
-        '• "เดือน 8 กำลังทำ ซื้อของขวัญ" → เพิ่มงานลงเดือนสิงหาคม พร้อมระบุหมวดเลย (ค้าง / กำลังทำ / เสร็จแล้ว)\n' +
-        '• "รายการ" → ดูรายการงานของเดือนนี้ พร้อมเลขกำกับ\n' +
-        '• "ทำ 2" → ขยับสถานะงานหมายเลข 2 ไปข้างหน้า\n' +
-        '• "ย้อน 2" → ขยับสถานะงานหมายเลข 2 ย้อนกลับ\n' +
-        '• "ลบ 2" → ลบงานหมายเลข 2\n' +
-        '• "แก้ไข 2 ข้อความใหม่" → แก้ชื่องานหมายเลข 2\n' +
-        '• "กำหนด 2 2026-08-15" → ตั้งวันครบกำหนดของงานหมายเลข 2\n' +
-        '• "เลื่อน 2" → สลับให้งานหมายเลข 2 เลื่อนไปเดือนหน้าอัตโนมัติถ้ายังไม่เสร็จตอนสิ้นเดือน\n' +
-        '• "ประจำ 2" → สลับให้งานหมายเลข 2 เป็นงานประจำ สร้างซ้ำให้ทุกต้นเดือน\n\n' +
-        '(เลขที่ใช้อ้างอิงจะยึดตามรายการล่าสุดที่พิมพ์ "รายการ" ออกมาดูก่อนเสมอ)',
-    });
+    return client.replyMessage(event.replyToken, { type: 'text', text: WELCOME_MESSAGE });
   }
 
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(null);
   }
 
-  const text = normalizeThai(event.message.text.trim());
   const curKey = currentMonthKey();
+  const action = parseCommand(event.message.text, new Date());
 
-  // ----- "รายการ" : แสดงรายการงานของเดือนนี้ พร้อมจำลำดับไว้ใช้อ้างอิง -----
-  if (text === 'รายการ' || text.toLowerCase() === 'list') {
-    const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
-    data.lastList = monthTasks.map((t) => t.id);
-    saveData(data);
-    return client.replyMessage(event.replyToken, { type: 'text', text: formatTaskList(monthTasks, curKey) });
-  }
-
-  // ----- "ทำ N" / "ย้อน N" : ขยับสถานะ -----
-  let m = text.match(/^(ทำ|ย้อน)\s+(\d+)$/);
-  if (m) {
-    const dir = m[1] === 'ทำ' ? 1 : -1;
-    const idx = parseInt(m[2], 10) - 1;
+  function findByLastList(idx) {
     const taskId = data.lastList[idx];
-    const task = data.tasks.find((t) => t.id === taskId);
-    if (!task) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
-      });
-    }
-    const newIdx = STATUS_ORDER.indexOf(task.status) + dir;
-    if (newIdx < 0 || newIdx > 2) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: `"${task.text}" อยู่ที่สถานะ [${STATUS_LABEL[task.status]}] อยู่แล้ว ขยับต่อไม่ได้ครับ`,
-      });
-    }
-    task.status = STATUS_ORDER[newIdx];
-    saveData(data);
+    return data.tasks.find((t) => t.id === taskId);
+  }
+  function findNoteByLastList(idx) {
+    const noteId = data.lastNoteList[idx];
+    return data.notes.find((n) => n.id === noteId);
+  }
+  function notFoundReply() {
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `อัปเดตแล้ว: "${task.text}" → [${STATUS_LABEL[task.status]}]`,
+      text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
+    });
+  }
+  function noteNotFoundReply() {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: 'ไม่พบบันทึกหมายเลขนี้ครับ ลองพิมพ์ "ดูโน้ต" เพื่อดูเลขล่าสุดก่อนนะครับ',
     });
   }
 
-  // ----- "ลบ N" : ลบงาน -----
-  m = text.match(/^ลบ\s+(\d+)$/);
-  if (m) {
-    const idx = parseInt(m[1], 10) - 1;
-    const taskId = data.lastList[idx];
-    const task = data.tasks.find((t) => t.id === taskId);
-    if (!task) {
+  switch (action.type) {
+    case 'list': {
+      const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
+      data.lastList = monthTasks.map((t) => t.id);
+      saveData(data);
+      return client.replyMessage(event.replyToken, { type: 'text', text: formatTaskList(monthTasks, curKey) });
+    }
+
+    case 'move': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      const newIdx = STATUS_ORDER.indexOf(task.status) + action.dir;
+      if (newIdx < 0 || newIdx > 2) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: `"${task.text}" อยู่ที่สถานะ [${STATUS_LABEL[task.status]}] อยู่แล้ว ขยับต่อไม่ได้ครับ`,
+        });
+      }
+      task.status = STATUS_ORDER[newIdx];
+      saveData(data);
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
+        text: `อัปเดตแล้ว: "${task.text}" → [${STATUS_LABEL[task.status]}]`,
       });
     }
-    data.tasks = data.tasks.filter((t) => t.id !== taskId);
-    saveData(data);
-    return client.replyMessage(event.replyToken, { type: 'text', text: `ลบแล้ว: "${task.text}"` });
-  }
 
-  // ----- "แก้ไข N ข้อความใหม่" : แก้ข้อความงาน -----
-  m = text.match(/^แก้ไข\s+(\d+)\s+(.+)$/s);
-  if (m) {
-    const idx = parseInt(m[1], 10) - 1;
-    const taskId = data.lastList[idx];
-    const task = data.tasks.find((t) => t.id === taskId);
-    if (!task) {
+    case 'delete': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      data.tasks = data.tasks.filter((t) => t.id !== task.id);
+      saveData(data);
+      return client.replyMessage(event.replyToken, { type: 'text', text: `ลบแล้ว: "${task.text}"` });
+    }
+
+    case 'edit': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      const oldText = task.text;
+      task.text = action.text;
+      saveData(data);
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
+        text: `แก้ไขแล้ว: "${oldText}" → "${task.text}"`,
       });
     }
-    const oldText = task.text;
-    task.text = m[2].trim();
-    saveData(data);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: `แก้ไขแล้ว: "${oldText}" → "${task.text}"`,
-    });
-  }
 
-  // ----- "กำหนด N YYYY-MM-DD" : ตั้งวันครบกำหนด -----
-  m = text.match(/^กำหนด\s+(\d+)\s+(\d{4}-\d{2}-\d{2})$/);
-  if (m) {
-    const idx = parseInt(m[1], 10) - 1;
-    const taskId = data.lastList[idx];
-    const task = data.tasks.find((t) => t.id === taskId);
-    if (!task) {
+    case 'deadline': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      task.deadline = action.date;
+      saveData(data);
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
+        text: `ตั้งวันครบกำหนดแล้ว: "${task.text}" → ${task.deadline}`,
       });
     }
-    task.deadline = m[2];
-    saveData(data);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: `ตั้งวันครบกำหนดแล้ว: "${task.text}" → ${task.deadline}`,
-    });
-  }
 
-  // ----- "เลื่อน N" : สลับสถานะเลื่อนงานนี้ไปเดือนหน้าอัตโนมัติถ้ายังไม่เสร็จ -----
-  m = text.match(/^เลื่อน\s+(\d+)$/);
-  if (m) {
-    const idx = parseInt(m[1], 10) - 1;
-    const taskId = data.lastList[idx];
-    const task = data.tasks.find((t) => t.id === taskId);
-    if (!task) {
+    case 'toggleCarry': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      task.carryOver = !task.carryOver;
+      saveData(data);
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
+        text: task.carryOver
+          ? `ตั้งค่าแล้ว: "${task.text}" จะเลื่อนไปเดือนหน้าอัตโนมัติถ้ายังไม่เสร็จตอนสิ้นเดือน`
+          : `ยกเลิกแล้ว: "${task.text}" จะไม่เลื่อนเดือนอัตโนมัติอีก`,
       });
     }
-    task.carryOver = !task.carryOver;
-    saveData(data);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: task.carryOver
-        ? `ตั้งค่าแล้ว: "${task.text}" จะเลื่อนไปเดือนหน้าอัตโนมัติถ้ายังไม่เสร็จตอนสิ้นเดือน`
-        : `ยกเลิกแล้ว: "${task.text}" จะไม่เลื่อนเดือนอัตโนมัติอีก`,
-    });
-  }
 
-  // ----- "ประจำ N" : สลับสถานะงานประจำ (สร้างซ้ำทุกเดือนอัตโนมัติ) -----
-  m = text.match(/^ประจำ\s+(\d+)$/);
-  if (m) {
-    const idx = parseInt(m[1], 10) - 1;
-    const taskId = data.lastList[idx];
-    const task = data.tasks.find((t) => t.id === taskId);
-    if (!task) {
+    case 'toggleRecurring': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      task.recurring = !task.recurring;
+      if (task.recurring && !task.recurringId) task.recurringId = task.id;
+      saveData(data);
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: 'ไม่พบงานหมายเลขนี้ครับ ลองพิมพ์ "รายการ" เพื่อดูเลขล่าสุดก่อนนะครับ',
+        text: task.recurring
+          ? `ตั้งเป็นงานประจำแล้ว: "${task.text}" จะถูกสร้างใหม่ให้อัตโนมัติทุกต้นเดือน`
+          : `ยกเลิกงานประจำแล้ว: "${task.text}"`,
       });
     }
-    task.recurring = !task.recurring;
-    if (task.recurring && !task.recurringId) task.recurringId = task.id;
-    saveData(data);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: task.recurring
-        ? `ตั้งเป็นงานประจำแล้ว: "${task.text}" จะถูกสร้างใหม่ให้อัตโนมัติทุกต้นเดือน`
-        : `ยกเลิกงานประจำแล้ว: "${task.text}"`,
-    });
-  }
 
-  // ----- "เดือน X ข้อความ" หรือ "เดือน X สถานะ ข้อความ" : เพิ่มงานลงเดือนอื่น -----
-  m = text.match(/^เดือน\s*(\d{1,2})\s+(.+)$/s) || text.match(/^เดือน\s+(\S+)\s+(.+)$/s);
-  if (m) {
-    const mKey = parseMonthToken(m[1]);
-    let rest = m[2].trim();
-    if (!mKey) {
+    case 'taskNote': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      task.note = action.text;
+      saveData(data);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: `📝 เพิ่มโน้ตให้งาน "${task.text}" แล้ว: ${task.note}`,
+      });
+    }
+
+    case 'clearTaskNote': {
+      const task = findByLastList(action.index);
+      if (!task) return notFoundReply();
+      task.note = null;
+      saveData(data);
+      return client.replyMessage(event.replyToken, { type: 'text', text: `ลบโน้ตของงาน "${task.text}" แล้ว` });
+    }
+
+    case 'addNote': {
+      const note = { id: newId(), text: action.text, createdAt: Date.now() };
+      data.notes.push(note);
+      saveData(data);
+      return client.replyMessage(event.replyToken, { type: 'text', text: `📝 จดแล้ว: "${note.text}"` });
+    }
+
+    case 'listNotes': {
+      data.lastNoteList = data.notes.map((n) => n.id);
+      saveData(data);
+      return client.replyMessage(event.replyToken, { type: 'text', text: formatNoteList(data.notes) });
+    }
+
+    case 'deleteNote': {
+      const note = findNoteByLastList(action.index);
+      if (!note) return noteNotFoundReply();
+      data.notes = data.notes.filter((n) => n.id !== note.id);
+      saveData(data);
+      return client.replyMessage(event.replyToken, { type: 'text', text: `ลบบันทึกแล้ว: "${note.text}"` });
+    }
+
+    case 'monthError': {
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: 'ไม่เข้าใจชื่อเดือนครับ ลองพิมพ์เป็นเลข 1-12 เช่น "เดือน 8 ซื้อของขวัญ" หรือชื่อเดือนเต็ม เช่น "เดือน สิงหาคม ซื้อของขวัญ"',
       });
     }
-    let status = 'pending';
-    const statusMatch = rest.match(/^["']?(ค้าง|กำลังทำ|เสร็จแล้ว|เสร็จ)["']?\s+(.+)$/s);
-    if (statusMatch) {
-      const word = statusMatch[1];
-      status = word === 'ค้าง' ? 'pending' : word === 'กำลังทำ' ? 'doing' : 'done';
-      rest = statusMatch[2].trim();
+
+    case 'addToMonth': {
+      const task = { id: newId(), text: action.text, status: action.status, monthKey: action.monthKey, order: Date.now() };
+      data.tasks.push(task);
+      saveData(data);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: `✅ เพิ่มงานแล้ว: "${task.text}"\nหมวด: ${STATUS_LABEL[task.status]} (${monthLabel(task.monthKey)})`,
+      });
     }
-    const task = { id: newId(), text: rest, status, monthKey: mKey, order: Date.now() };
-    data.tasks.push(task);
-    saveData(data);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: `✅ เพิ่มงานแล้ว: "${rest}"\nหมวด: ${STATUS_LABEL[status]} (${monthLabel(mKey)})`,
-    });
+
+    case 'addDefault':
+    default: {
+      const task = { id: newId(), text: action.text, status: 'pending', monthKey: curKey, order: Date.now() };
+      data.tasks.push(task);
+      saveData(data);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: `✅ เพิ่มงานแล้ว: "${task.text}"\nหมวด: ค้าง (${monthLabel(curKey)})`,
+      });
+    }
   }
-
-  // ----- ข้อความอื่นๆ ทั้งหมด: เพิ่มเป็นงานค้างใหม่ของเดือนปัจจุบัน -----
-  const task = { id: newId(), text, status: 'pending', monthKey: curKey, order: Date.now() };
-  data.tasks.push(task);
-  saveData(data);
-
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: `✅ เพิ่มงานแล้ว: "${text}"\nหมวด: ค้าง (${monthLabel(curKey)})`,
-  });
 }
 
-// ---------------- REST API for the web dashboard ----------------
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -351,6 +333,7 @@ app.patch('/api/tasks/:id', (req, res) => {
   if (req.body.status) task.status = req.body.status;
   if (req.body.text) task.text = req.body.text;
   if ('deadline' in req.body) task.deadline = req.body.deadline || null;
+  if ('note' in req.body) task.note = req.body.note || null;
   if ('carryOver' in req.body) task.carryOver = !!req.body.carryOver;
   if ('recurring' in req.body) {
     task.recurring = !!req.body.recurring;
@@ -392,6 +375,27 @@ app.get('/api/export', (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="tasks-${mKey}.csv"`);
   res.send(csv);
+});
+
+app.get('/api/notes', (req, res) => {
+  res.json(loadData().notes);
+});
+
+app.post('/api/notes', (req, res) => {
+  const { text } = req.body;
+  if (!text || !text.trim()) return res.status(400).json({ error: 'text is required' });
+  const data = loadData();
+  const note = { id: newId(), text: text.trim(), createdAt: Date.now() };
+  data.notes.push(note);
+  saveData(data);
+  res.json(note);
+});
+
+app.delete('/api/notes/:id', (req, res) => {
+  const data = loadData();
+  data.notes = data.notes.filter((n) => n.id !== req.params.id);
+  saveData(data);
+  res.json({ ok: true });
 });
 
 app.get('/api/status', (req, res) => {
