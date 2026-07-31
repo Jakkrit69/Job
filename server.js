@@ -8,7 +8,7 @@ const { normalizeThai, parseMonthToken, parseCommand, resolveIndexed, STATUS_LAB
 
 // เพิ่มตัวเลขนี้ทุกครั้งที่แก้ server.js/commands.js — ใช้เช็คว่า deploy โค้ดล่าสุดจริงหรือยัง
 // เช็คได้ที่ GET /api/version หรือพิมพ์ "เวอร์ชัน" ใน LINE
-const BUILD_VERSION = 'v11-2026-07-31-stale-ref-fix';
+const BUILD_VERSION = 'v12-2026-07-31-note-reorder';
 
 let DATA_DIR = process.env.DATA_DIR || '/data';
 try {
@@ -76,6 +76,10 @@ function formatTaskList(tasks, mKey) {
   );
 }
 
+function sortNotes(notes) {
+  return notes.slice().sort((a, b) => (a.order ?? a.createdAt ?? 0) - (b.order ?? b.createdAt ?? 0));
+}
+
 function formatNoteList(notes) {
   if (notes.length === 0) return 'ยังไม่มีบันทึกเลยครับ พิมพ์ "จด ข้อความ" เพื่อเพิ่มบันทึกแรกได้เลย';
   const lines = notes.map((n, i) => `${i + 1}. ${n.text}`).join('\n');
@@ -135,13 +139,16 @@ async function handleLineEvent(event) {
   const action = parseCommand(event.message.text, new Date());
 
   function findByLastList(idx) {
-    const monthTasks = data.tasks.filter((t) => t.monthKey === curKey);
+    const monthTasks = data.tasks
+      .filter((t) => t.monthKey === curKey)
+      .slice()
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const { item, list } = resolveIndexed(data.lastList, monthTasks, idx);
     data.lastList = list;
     return item;
   }
   function findNoteByLastList(idx) {
-    const { item, list } = resolveIndexed(data.lastNoteList, data.notes, idx);
+    const { item, list } = resolveIndexed(data.lastNoteList, sortNotes(data.notes), idx);
     data.lastNoteList = list;
     return item;
   }
@@ -169,7 +176,10 @@ async function handleLineEvent(event) {
 
     case 'list': {
       const targetKey = action.monthKey || curKey;
-      const monthTasks = data.tasks.filter((t) => t.monthKey === targetKey);
+      const monthTasks = data.tasks
+        .filter((t) => t.monthKey === targetKey)
+        .slice()
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       data.lastList = monthTasks.map((t) => t.id);
       saveData(data);
       return client.replyMessage(event.replyToken, { type: 'text', text: formatTaskList(monthTasks, targetKey) });
@@ -278,16 +288,17 @@ async function handleLineEvent(event) {
     }
 
     case 'addNote': {
-      const note = { id: newId(), text: action.text, createdAt: Date.now() };
+      const note = { id: newId(), text: action.text, createdAt: Date.now(), order: Date.now() };
       data.notes.push(note);
       saveData(data);
       return client.replyMessage(event.replyToken, { type: 'text', text: `📝 จดแล้ว: "${note.text}"` });
     }
 
     case 'listNotes': {
-      data.lastNoteList = data.notes.map((n) => n.id);
+      const sortedNotes = sortNotes(data.notes);
+      data.lastNoteList = sortedNotes.map((n) => n.id);
       saveData(data);
-      return client.replyMessage(event.replyToken, { type: 'text', text: formatNoteList(data.notes) });
+      return client.replyMessage(event.replyToken, { type: 'text', text: formatNoteList(sortedNotes) });
     }
 
     case 'deleteNote': {
@@ -416,17 +427,29 @@ app.get('/api/export', (req, res) => {
 });
 
 app.get('/api/notes', (req, res) => {
-  res.json(loadData().notes);
+  res.json(sortNotes(loadData().notes));
 });
 
 app.post('/api/notes', (req, res) => {
   const { text } = req.body;
   if (!text || !text.trim()) return res.status(400).json({ error: 'text is required' });
   const data = loadData();
-  const note = { id: newId(), text: text.trim(), createdAt: Date.now() };
+  const note = { id: newId(), text: text.trim(), createdAt: Date.now(), order: Date.now() };
   data.notes.push(note);
   saveData(data);
   res.json(note);
+});
+
+app.post('/api/notes/reorder', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  const data = loadData();
+  ids.forEach((id, idx) => {
+    const n = data.notes.find((n) => n.id === id);
+    if (n) n.order = idx;
+  });
+  saveData(data);
+  res.json({ ok: true });
 });
 
 app.delete('/api/notes/:id', (req, res) => {
