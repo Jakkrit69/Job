@@ -277,7 +277,7 @@ async function handleLineEvent(event) {
   }
 
   // ----- "เดือน X ข้อความ" หรือ "เดือน X สถานะ ข้อความ" : เพิ่มงานลงเดือนอื่น -----
-  m = text.match(/^เดือน\s+(\S+)\s+(.+)$/s);
+  m = text.match(/^เดือน\s*(\d{1,2})\s+(.+)$/s) || text.match(/^เดือน\s+(\S+)\s+(.+)$/s);
   if (m) {
     const mKey = parseMonthToken(m[1]);
     let rest = m[2].trim();
