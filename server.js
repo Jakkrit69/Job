@@ -317,10 +317,11 @@ async function handleLineEvent(event) {
       const task = { id: newId(), text: action.text, status: 'pending', monthKey: curKey, order: Date.now() };
       data.tasks.push(task);
       saveData(data);
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: `✅ เพิ่มงานแล้ว: "${task.text}"\nหมวด: ค้าง (${monthLabel(curKey)})`,
-      });
+      let replyText = `✅ เพิ่มงานแล้ว: "${task.text}"\nหมวด: ค้าง (${monthLabel(curKey)})`;
+      if (action.debugHex) {
+        replyText += `\n\n🔧 ข้อความนี้ขึ้นต้นคล้ายคำสั่งแต่จับไม่ได้ รหัสตัวอักษร (ส่งภาพนี้ให้ผู้ดูแลดูได้):\n${action.debugHex}`;
+      }
+      return client.replyMessage(event.replyToken, { type: 'text', text: replyText });
     }
   }
 }

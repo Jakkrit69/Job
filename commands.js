@@ -10,15 +10,27 @@ const STATUS_LABEL = { pending: "ค้าง", doing: "กำลังทำ", 
 const STATUS_ORDER = ["pending", "doing", "done"];
 const THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
 
+// คำขึ้นต้นคำสั่งทั้งหมด — ใช้เช็คว่าข้อความที่ตกไป addDefault "ดูคล้าย" คำสั่งไหม (เผื่อพิมพ์เกือบถูกแต่มีจุดต่างที่มองไม่เห็น)
+const COMMAND_KEYWORDS = ['รายการ', 'ทำ', 'ย้อน', 'ลบ', 'แก้ไข', 'กำหนด', 'เลื่อน', 'ประจำ', 'โน้ต', 'ดู', 'จด', 'เดือน'];
+
+// แปลงข้อความเป็นรหัส Unicode (hex) ทีละตัวอักษร — ใช้ตอนดีบักเทียบว่าตัวอักษรที่พิมพ์มาจริงๆ ตรงกับที่คาดไว้ไหม
+function toHexDump(str) {
+  return [...str].map((ch) => ch.codePointAt(0).toString(16).toUpperCase()).join(' ');
+}
+
 // ปรับข้อความภาษาไทยให้เป็นรูปแบบมาตรฐานเดียวกัน ก่อนนำไปเทียบ/แยกคำสั่ง
 // - .normalize('NFC') มาตรฐาน Unicode (ไม่ครอบคลุมสระอำภาษาไทย)
 // - แปลงนิคหิต+สระอา (โค้ดคนละตัวที่บางคีย์บอร์ดพิมพ์) ให้เป็นสระอำตัวเดียว
 // - แปลงเลขไทย ๐-๙ เป็นเลขอารบิก
 // - แปลง "โน๊ต" (ไม้ตรี) ให้เป็น "โน้ต" (ไม้โท) — คนละรหัสแต่คนไทยใช้สะกดคำว่า note สลับกันทั้งคู่
+// - ลบอักขระที่มองไม่เห็น (คีย์บอร์ดมือถือบางรุ่นแทรกมาตอนกดคำแนะนำ/autocomplete)
+// - แปลงช่องว่างชนิดพิเศษ (non-breaking space ฯลฯ) ให้เป็นช่องว่างปกติ
 function normalizeThai(str) {
   let s = String(str).normalize('NFC').replace(/\u0E4D\u0E32/g, '\u0E33');
   s = s.replace(/[๐-๙]/g, (d) => String(THAI_DIGITS.indexOf(d)));
   s = s.replace(/โน๊ต/g, 'โน้ต');
+  s = s.replace(/[\u200B-\u200D\uFEFF]/g, '');
+  s = s.replace(/[\u00A0\u202F]/g, ' ');
   return s;
 }
 
@@ -126,7 +138,12 @@ function parseCommand(rawText, refDate) {
     return { type: 'addToMonth', monthKey: mKey, status, text: rest };
   }
 
-  return { type: 'addDefault', text };
+  const looksLikeCommand = COMMAND_KEYWORDS.some((kw) => text.startsWith(kw));
+  return {
+    type: 'addDefault',
+    text,
+    debugHex: looksLikeCommand ? toHexDump(text.slice(0, 24)) : null,
+  };
 }
 
 module.exports = {
