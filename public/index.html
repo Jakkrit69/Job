@@ -260,6 +260,7 @@ html, body {
 .lp-right-actions { flex-wrap: wrap; row-gap: 4px; }
 .lp-deadline { font-size: 10.5px; color: var(--doing); margin-top: 3px; }
 .lp-deadline.overdue { color: var(--rose); font-weight: 600; }
+.lp-task-note { font-size: 11px; color: var(--ink-soft); font-style: italic; margin-top: 3px; }
 .lp-edit-row { display: flex; gap: 5px; align-items: center; }
 .lp-edit-input {
   flex: 1;
@@ -342,6 +343,23 @@ html, body {
 }
 
 .lp-stats-title { font-family: 'Kanit', sans-serif; font-size: 15px; margin-bottom: 14px; }
+
+.lp-notes-panel { padding: 4px 2px; }
+.lp-notes-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.lp-note-card {
+  background: var(--card-solid);
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-left-color: var(--gold);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+.lp-note-text { flex: 1; white-space: pre-wrap; }
 .lp-stats-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 0 4px; }
 .lp-stat-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
 .lp-stat-pct { font-size: 10px; font-family: 'JetBrains Mono', monospace; color: var(--ink-soft); margin-bottom: 4px; }
@@ -379,7 +397,7 @@ html, body {
   const now = new Date();
   let state = {
     year: now.getFullYear(), monthIndex: now.getMonth(), tasks: [], lineConnected: false, loaded: false,
-    editingId: null, searchQuery: '', view: 'board',
+    editingId: null, searchQuery: '', view: 'board', notes: [],
   };
 
   const root = document.getElementById('lp-root');
@@ -387,12 +405,14 @@ html, body {
   function monthKey(year, mIdx) { return year + "-" + String(mIdx + 1).padStart(2, "0"); }
 
   async function loadAll() {
-    const [tasksRes, statusRes] = await Promise.all([
+    const [tasksRes, statusRes, notesRes] = await Promise.all([
       fetch('/api/tasks').then(r => r.json()).catch(() => []),
       fetch('/api/status').then(r => r.json()).catch(() => ({ lineConnected: false })),
+      fetch('/api/notes').then(r => r.json()).catch(() => []),
     ]);
     state.tasks = tasksRes;
     state.lineConnected = statusRes.lineConnected;
+    state.notes = notesRes;
     state.loaded = true;
     render();
   }
@@ -436,6 +456,9 @@ html, body {
     return { pct: Math.round((done / list.length) * 100), total: list.length };
   }
 
+  function normalizeThai(str) {
+    return str.normalize('NFC').replace(/\u0E4D\u0E32/g, '\u0E33');
+  }
   function escapeHTML(str) { const d = document.createElement("div"); d.textContent = str; return d.innerHTML; }
   function escapeAttr(str) { return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
@@ -486,13 +509,16 @@ html, body {
         const deadlineHTML = t.deadline
           ? `<div class="lp-deadline ${isOverdue(t) ? 'overdue' : ''}">⏰ ${formatDeadline(t.deadline)}</div>`
           : "";
+        const noteHTML = t.note
+          ? `<div class="lp-task-note">📝 ${escapeHTML(t.note)}</div>`
+          : "";
         const bodyTopHTML = isEditing
           ? `<div class="lp-edit-row">
                <input type="text" class="lp-edit-input" data-edit-input="${t.id}" value="${escapeAttr(t.text)}" />
                <button data-edit-save="${t.id}">✓</button>
                <button data-edit-cancel="${t.id}">✕</button>
              </div>`
-          : `<div class="lp-task-text">${escapeHTML(t.text)}</div>${deadlineHTML}`;
+          : `<div class="lp-task-text">${escapeHTML(t.text)}</div>${deadlineHTML}${noteHTML}`;
         return `
           <div class="lp-task-card ${t.status}" data-id="${t.id}">
             <div class="lp-drag-handle" data-drag="${t.id}">⠿</div>
@@ -506,6 +532,7 @@ html, body {
                 <div class="lp-right-actions">
                   <button class="lp-icon-btn ${t.carryOver ? 'active' : ''}" data-carry-btn="${t.id}" title="เลื่อนไปเดือนหน้าอัตโนมัติถ้ายังไม่เสร็จ">⏭️</button>
                   <button class="lp-icon-btn ${t.recurring ? 'active' : ''}" data-recur-btn="${t.id}" title="งานประจำ สร้างซ้ำทุกเดือน">🔁</button>
+                  <button class="lp-icon-btn ${t.note ? 'active' : ''}" data-note-btn="${t.id}" title="โน้ตแนบงาน">📝</button>
                   <button class="lp-icon-btn" data-deadline-btn="${t.id}" title="ตั้งวันครบกำหนด">📅</button>
                   <button class="lp-icon-btn" data-edit-btn="${t.id}" title="แก้ไขข้อความ">✏️</button>
                   <button class="lp-del-btn" data-del="${t.id}">ลบ</button>
@@ -526,6 +553,25 @@ html, body {
             <button data-add-btn="${status}">+</button>
           </div>
           <div class="lp-task-list">${cards}</div>
+        </div>`;
+    }
+
+    function notesHTML() {
+      const notesSorted = state.notes.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      let items = notesSorted.map(n => `
+        <div class="lp-note-card" data-note-id="${n.id}">
+          <div class="lp-note-text">${escapeHTML(n.text)}</div>
+          <button class="lp-del-btn" data-del-note="${n.id}">ลบ</button>
+        </div>`).join("");
+      if (!items) items = `<div class="lp-empty-hint">ยังไม่มีบันทึกเลย ลองพิมพ์เพิ่มด้านบนดูครับ</div>`;
+      return `
+        <div class="lp-notes-panel">
+          <div class="lp-stats-title">📝 บันทึกทั่วไป</div>
+          <div class="lp-add-row">
+            <input type="text" placeholder="พิมพ์บันทึกใหม่..." id="lp-note-input" />
+            <button data-add-note-btn>+</button>
+          </div>
+          <div class="lp-notes-list">${items}</div>
         </div>`;
     }
 
@@ -554,7 +600,7 @@ html, body {
     function searchResultsHTML() {
       const q = state.searchQuery.trim();
       if (!q) return "";
-      const matches = state.tasks.filter(t => t.text.includes(q)).slice(0, 20);
+      const matches = state.tasks.filter(t => normalizeThai(t.text).includes(normalizeThai(q))).slice(0, 20);
       if (matches.length === 0) {
         return `<div class="lp-search-results"><div class="lp-empty-hint">ไม่พบงานที่ตรงกับ "${escapeHTML(q)}"</div></div>`;
       }
@@ -588,9 +634,10 @@ html, body {
               <input type="text" class="lp-search-input" id="lp-search-input" placeholder="ค้นหางาน..." value="${escapeAttr(state.searchQuery)}" />
               ${searchResultsHTML()}
             </div>
+            <button class="lp-toggle-btn" data-toggle-notes>${state.view === 'notes' ? '← กลับไปดูงาน' : '📝 บันทึกทั่วไป'}</button>
             <button class="lp-toggle-btn" data-toggle-view>${state.view === 'stats' ? '← กลับไปดูงาน' : '📊 ภาพรวมทั้งปี'}</button>
           </div>
-          ${state.view === 'stats' ? statsHTML() : `
+          ${state.view === 'notes' ? notesHTML() : state.view === 'stats' ? statsHTML() : `
           <div class="lp-month-grid">${monthGridHTML}</div>
           <div class="lp-month-heading">
             ${THAI_MONTHS_FULL[state.monthIndex]} ${buddhistYear}
@@ -648,6 +695,7 @@ html, body {
     root.querySelectorAll('[data-deadline-btn]').forEach(el => el.addEventListener('click', () => promptDeadline(el.getAttribute('data-deadline-btn'))));
     root.querySelectorAll('[data-carry-btn]').forEach(el => el.addEventListener('click', () => toggleCarryOver(el.getAttribute('data-carry-btn'))));
     root.querySelectorAll('[data-recur-btn]').forEach(el => el.addEventListener('click', () => toggleRecurring(el.getAttribute('data-recur-btn'))));
+    root.querySelectorAll('[data-note-btn]').forEach(el => el.addEventListener('click', () => promptTaskNote(el.getAttribute('data-note-btn'))));
 
     const searchInput = root.querySelector('#lp-search-input');
     if (searchInput) {
@@ -669,6 +717,19 @@ html, body {
 
     const toggleBtn = root.querySelector('[data-toggle-view]');
     if (toggleBtn) toggleBtn.addEventListener('click', () => { state.view = state.view === 'stats' ? 'board' : 'stats'; render(); });
+
+    const toggleNotesBtn = root.querySelector('[data-toggle-notes]');
+    if (toggleNotesBtn) toggleNotesBtn.addEventListener('click', () => { state.view = state.view === 'notes' ? 'board' : 'notes'; render(); });
+
+    const noteInput = root.querySelector('#lp-note-input');
+    const addNoteBtn = root.querySelector('[data-add-note-btn]');
+    if (addNoteBtn && noteInput) {
+      addNoteBtn.addEventListener('click', () => { addStandaloneNote(noteInput.value); noteInput.value = ''; });
+      noteInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { addStandaloneNote(noteInput.value); noteInput.value = ''; }
+      });
+    }
+    root.querySelectorAll('[data-del-note]').forEach(el => el.addEventListener('click', () => deleteStandaloneNote(el.getAttribute('data-del-note'))));
   }
 
   async function saveTaskEdit(id, newText) {
@@ -721,6 +782,36 @@ html, body {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recurring: t.recurring }),
     });
+  }
+
+  async function promptTaskNote(id) {
+    const t = state.tasks.find(t => t.id === id);
+    if (!t) return;
+    const input = window.prompt('โน้ตแนบงานนี้ (เว้นว่างเพื่อลบโน้ต)', t.note || '');
+    if (input === null) return;
+    t.note = input.trim() || null;
+    render();
+    await fetch('/api/tasks/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: t.note }),
+    });
+  }
+
+  async function addStandaloneNote(text) {
+    if (!text || !text.trim()) return;
+    const res = await fetch('/api/notes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.trim() }),
+    });
+    const note = await res.json();
+    state.notes.push(note);
+    render();
+  }
+
+  async function deleteStandaloneNote(id) {
+    state.notes = state.notes.filter(n => n.id !== id);
+    render();
+    await fetch('/api/notes/' + id, { method: 'DELETE' });
   }
 
   // ---------- ลากจัดลำดับ ----------
