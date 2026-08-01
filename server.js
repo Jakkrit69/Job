@@ -8,7 +8,7 @@ const { normalizeThai, parseMonthToken, parseCommand, resolveIndexed, STATUS_LAB
 
 // เพิ่มตัวเลขนี้ทุกครั้งที่แก้ server.js/commands.js — ใช้เช็คว่า deploy โค้ดล่าสุดจริงหรือยัง
 // เช็คได้ที่ GET /api/version หรือพิมพ์ "เวอร์ชัน" ใน LINE
-const BUILD_VERSION = 'v13-2026-08-01-selfheal-rollover';
+const BUILD_VERSION = 'v15-2026-08-01-selfheal-reminder';
 
 let DATA_DIR = process.env.DATA_DIR || '/data';
 try {
@@ -43,30 +43,58 @@ function ensureMonthlyRollover() {
   return { moved, created, ranNow: true };
 }
 
+// เหมือน ensureMonthlyRollover แต่สำหรับ "สรุปงานประจำวัน" (เดิมพึ่ง cron ตอน 08:00 อย่างเดียว
+// ถ้าเครื่องหลับอยู่ตอนนั้นก็จะไม่ส่งเลย) — เช็คทุกคำขอที่เข้ามา ถ้ายังไม่เคยส่งของวันนี้ ส่งทันที
+function ensureDailyReminder() {
+  const data = loadData();
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (data.lastReminderRunDate === todayStr) return false;
+  data.lastReminderRunDate = todayStr;
+  saveData(data);
+  return true;
+}
+
 app.use((req, res, next) => {
   try {
     const result = ensureMonthlyRollover();
-    if (result.ranNow && (result.moved > 0 || result.created > 0)) {
+    if (result.ranNow) {
       const data = loadData();
       if (data.lineUserId) {
+        const curKey = currentMonthKey();
+        const monthTasks = data.tasks
+          .filter((t) => t.monthKey === curKey)
+          .slice()
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+        let text = `📅 เริ่มเดือนใหม่ — ${monthLabel(curKey)}\n`;
         const parts = [];
-        if (result.moved > 0) parts.push(`เลื่อนงานที่ยังไม่เสร็จมาเดือนนี้ ${result.moved} ชิ้น`);
+        if (result.moved > 0) parts.push(`เลื่อนงานที่ยังไม่เสร็จมา ${result.moved} ชิ้น`);
         if (result.created > 0) parts.push(`สร้างงานประจำใหม่ ${result.created} ชิ้น`);
-        client.pushMessage(data.lineUserId, {
-          type: 'text',
-          text: `🔁 อัปเดตต้นเดือนอัตโนมัติ: ${parts.join(' และ ')}`,
-        }).catch((err) => console.error('push rollover notice failed', err));
+        if (parts.length > 0) text += `🔁 ${parts.join(' และ ')}\n`;
+        text += `\n${formatTaskList(monthTasks, curKey)}`;
+
+        client.pushMessage(data.lineUserId, { type: 'text', text })
+          .catch((err) => console.error('push rollover notice failed', err));
       }
     }
   } catch (err) {
     console.error('monthly rollover check failed', err);
   }
+
+  try {
+    if (ensureDailyReminder()) {
+      sendReminder().catch((err) => console.error('daily reminder failed', err));
+    }
+  } catch (err) {
+    console.error('daily reminder check failed', err);
+  }
+
   next();
 });
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [], lastMonthlyRunKey: null };
+    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [], lastMonthlyRunKey: null, lastReminderRunDate: null };
   }
   try {
     const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
@@ -74,9 +102,10 @@ function loadData() {
     if (!d.notes) d.notes = [];
     if (!d.lastNoteList) d.lastNoteList = [];
     if (d.lastMonthlyRunKey === undefined) d.lastMonthlyRunKey = null;
+    if (d.lastReminderRunDate === undefined) d.lastReminderRunDate = null;
     return d;
   } catch (e) {
-    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [], lastMonthlyRunKey: null };
+    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [], lastMonthlyRunKey: null, lastReminderRunDate: null };
   }
 }
 
@@ -542,9 +571,32 @@ async function sendReminder() {
 
   const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeftInMonth = lastDayOfMonth - now.getDate();
+  const isLastDayOfMonth = daysLeftInMonth === 0;
   const isNearMonthEnd = daysLeftInMonth <= 3;
   const unfinishedThisMonth = pending.length + doing.length;
 
+  // ----- สรุปท้ายเดือน: ส่งเฉพาะวันสุดท้ายของเดือน สรุปงานทุกชิ้น (รวมที่เสร็จแล้ว) -----
+  if (isLastDayOfMonth) {
+    const allThisMonth = data.tasks.filter((t) => t.monthKey === mKey);
+    const doneCount = allThisMonth.filter((t) => t.status === 'done').length;
+    const totalCount = allThisMonth.length;
+    const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+    const notDone = allThisMonth.filter((t) => t.status !== 'done');
+
+    let endText = `📊 สรุปท้ายเดือน — ${monthLabel(mKey)}\nงานทั้งหมด ${totalCount} ชิ้น | เสร็จแล้ว ${doneCount} ชิ้น (${pct}%)\n\n`;
+    if (notDone.length > 0) {
+      endText += `ยังไม่เสร็จ ${notDone.length} ชิ้น:\n`;
+      notDone.slice(0, 15).forEach((t, i) => {
+        endText += `${i + 1}. [${STATUS_LABEL[t.status]}] ${t.text}\n`;
+      });
+      if (notDone.length > 15) endText += `...และอีก ${notDone.length - 15} ชิ้น\n`;
+    } else if (totalCount > 0) {
+      endText += `🎉 ทำงานครบทุกชิ้นในเดือนนี้แล้ว!\n`;
+    }
+    await client.pushMessage(data.lineUserId, { type: 'text', text: endText.trim() });
+  }
+
+  // ----- สรุปประจำวัน (ค้าง/กำลังทำ + เตือนใกล้ครบกำหนด) -----
   if (pending.length === 0 && doing.length === 0 && dueSoon.length === 0 && !(isNearMonthEnd && unfinishedThisMonth > 0)) {
     return;
   }
@@ -626,28 +678,6 @@ app.post('/api/carryover-test', (req, res) => {
   res.json({ moved, created });
 });
 
-// วันที่ 1 ของทุกเดือน เวลา 00:05 เวลาไทย: เลื่อนงานค้าง + สร้างงานประจำใหม่
-cron.schedule('5 0 1 * *', async () => {
-  try {
-    const moved = runMonthCarryOver();
-    const created = runRecurringGeneration();
-    if (moved > 0 || created > 0) {
-      const data = loadData();
-      if (data.lineUserId) {
-        const parts = [];
-        if (moved > 0) parts.push(`เลื่อนงานที่ยังไม่เสร็จมาเดือนนี้ ${moved} ชิ้น`);
-        if (created > 0) parts.push(`สร้างงานประจำใหม่ ${created} ชิ้น`);
-        await client.pushMessage(data.lineUserId, {
-          type: 'text',
-          text: `🔁 อัปเดตต้นเดือนอัตโนมัติ: ${parts.join(' และ ')}`,
-        });
-      }
-    }
-  } catch (err) {
-    console.error(err);
-  }
-}, { timezone: 'Asia/Bangkok' });
-
 // ---------------- สำรองข้อมูล ----------------
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 
@@ -672,11 +702,6 @@ app.get('/api/backup/download', (req, res) => {
 // ทุกวันตี 00:30 เวลาไทย: สำรองข้อมูลไว้ 14 วันล่าสุด
 cron.schedule('30 0 * * *', () => {
   try { runDailyBackup(); } catch (err) { console.error(err); }
-}, { timezone: 'Asia/Bangkok' });
-
-// ทุกวัน 08:00 เวลาไทย
-cron.schedule('0 8 * * *', () => {
-  sendReminder().catch(console.error);
 }, { timezone: 'Asia/Bangkok' });
 
 const PORT = process.env.PORT || 3000;
