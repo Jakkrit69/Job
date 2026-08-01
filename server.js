@@ -8,7 +8,7 @@ const { normalizeThai, parseMonthToken, parseCommand, resolveIndexed, STATUS_LAB
 
 // เพิ่มตัวเลขนี้ทุกครั้งที่แก้ server.js/commands.js — ใช้เช็คว่า deploy โค้ดล่าสุดจริงหรือยัง
 // เช็คได้ที่ GET /api/version หรือพิมพ์ "เวอร์ชัน" ใน LINE
-const BUILD_VERSION = 'v12-2026-07-31-note-reorder';
+const BUILD_VERSION = 'v13-2026-08-01-selfheal-rollover';
 
 let DATA_DIR = process.env.DATA_DIR || '/data';
 try {
@@ -26,18 +26,57 @@ const lineConfig = {
 const client = new line.Client(lineConfig);
 const app = express();
 
+// ---------------- ตรวจสอบเดือนใหม่อัตโนมัติ (self-healing) ----------------
+// เดิมพึ่งพา cron ที่รันตอนตี 00:05 วันที่ 1 อย่างเดียว — ถ้าเครื่อง "หลับ" อยู่ตอนนั้น (เช่น Railway
+// พักการใช้งานตอนไม่มีคนเข้า) ตัวจับเวลาจะไม่ทำงานเลย งานที่ตั้งเลื่อนเดือน/งานประจำจะไม่ถูกสร้างขึ้น
+// จุดนี้เป็นตัวช่วยสำรอง: เช็คทุกครั้งที่มีคำขอเข้ามา (ไม่ว่าจะเปิดเว็บหรือพิมพ์ LINE) ว่าเดือนนี้
+// เคยรันไปหรือยัง ถ้ายังไม่เคย จะรันให้ทันทีตอนนั้นเลย ไม่ต้องรอเครื่องตื่นตรงเวลาเป๊ะ
+function ensureMonthlyRollover() {
+  const data = loadData();
+  const curKey = currentMonthKey();
+  if (data.lastMonthlyRunKey === curKey) return { moved: 0, created: 0, ranNow: false };
+  const moved = runMonthCarryOver();
+  const created = runRecurringGeneration();
+  const freshData = loadData();
+  freshData.lastMonthlyRunKey = curKey;
+  saveData(freshData);
+  return { moved, created, ranNow: true };
+}
+
+app.use((req, res, next) => {
+  try {
+    const result = ensureMonthlyRollover();
+    if (result.ranNow && (result.moved > 0 || result.created > 0)) {
+      const data = loadData();
+      if (data.lineUserId) {
+        const parts = [];
+        if (result.moved > 0) parts.push(`เลื่อนงานที่ยังไม่เสร็จมาเดือนนี้ ${result.moved} ชิ้น`);
+        if (result.created > 0) parts.push(`สร้างงานประจำใหม่ ${result.created} ชิ้น`);
+        client.pushMessage(data.lineUserId, {
+          type: 'text',
+          text: `🔁 อัปเดตต้นเดือนอัตโนมัติ: ${parts.join(' และ ')}`,
+        }).catch((err) => console.error('push rollover notice failed', err));
+      }
+    }
+  } catch (err) {
+    console.error('monthly rollover check failed', err);
+  }
+  next();
+});
+
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [] };
+    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [], lastMonthlyRunKey: null };
   }
   try {
     const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     if (!d.lastList) d.lastList = [];
     if (!d.notes) d.notes = [];
     if (!d.lastNoteList) d.lastNoteList = [];
+    if (d.lastMonthlyRunKey === undefined) d.lastMonthlyRunKey = null;
     return d;
   } catch (e) {
-    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [] };
+    return { tasks: [], lineUserId: null, lastList: [], notes: [], lastNoteList: [], lastMonthlyRunKey: null };
   }
 }
 
