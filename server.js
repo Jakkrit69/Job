@@ -8,7 +8,14 @@ const { normalizeThai, parseMonthToken, parseCommand, resolveIndexed, STATUS_LAB
 
 // เพิ่มตัวเลขนี้ทุกครั้งที่แก้ server.js/commands.js — ใช้เช็คว่า deploy โค้ดล่าสุดจริงหรือยัง
 // เช็คได้ที่ GET /api/version หรือพิมพ์ "เวอร์ชัน" ใน LINE
-const BUILD_VERSION = 'v15-2026-08-01-selfheal-reminder';
+const BUILD_VERSION = 'v16-2026-08-01-bangkok-time-8am';
+
+// คืนค่า Date object ที่แทน "เวลาไทย ณ ตอนนี้" โดยไม่พึ่งเขตเวลาที่ตั้งไว้ในเครื่องเซิร์ฟเวอร์
+// (Railway มักตั้งเป็น UTC) — ใช้ getUTC* เมธอดกับค่านี้เพื่ออ่าน "เวลาไทยจริง" เสมอ ไม่ว่าเซิร์ฟเวอร์จะตั้งเขตเวลาใดก็ตาม
+// (ไทยไม่มี daylight saving จึงบวก 7 ชั่วโมงคงที่ได้เลย ไม่ต้องกังวลเรื่องปรับเวลาตามฤดูกาล)
+function bangkokNow() {
+  return new Date(Date.now() + 7 * 60 * 60 * 1000);
+}
 
 let DATA_DIR = process.env.DATA_DIR || '/data';
 try {
@@ -46,8 +53,10 @@ function ensureMonthlyRollover() {
 // เหมือน ensureMonthlyRollover แต่สำหรับ "สรุปงานประจำวัน" (เดิมพึ่ง cron ตอน 08:00 อย่างเดียว
 // ถ้าเครื่องหลับอยู่ตอนนั้นก็จะไม่ส่งเลย) — เช็คทุกคำขอที่เข้ามา ถ้ายังไม่เคยส่งของวันนี้ ส่งทันที
 function ensureDailyReminder() {
+  const now = bangkokNow();
+  if (now.getUTCHours() < 8) return false; // ยังไม่ถึง 8 โมงเช้า (เวลาไทยจริง) — รอรอบถัดไป
   const data = loadData();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = now.toISOString().slice(0, 10);
   if (data.lastReminderRunDate === todayStr) return false;
   data.lastReminderRunDate = todayStr;
   saveData(data);
@@ -114,8 +123,8 @@ function saveData(data) {
 }
 
 function currentMonthKey() {
-  const now = new Date();
-  return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+  const now = bangkokNow();
+  return now.getUTCFullYear() + "-" + String(now.getUTCMonth() + 1).padStart(2, "0");
 }
 
 function monthLabel(monthKey) {
@@ -562,15 +571,15 @@ async function sendReminder() {
   const pending = data.tasks.filter((t) => t.monthKey === mKey && t.status === 'pending');
   const doing = data.tasks.filter((t) => t.monthKey === mKey && t.status === 'doing');
 
-  const now = new Date();
+  const now = bangkokNow();
   const todayStr = now.toISOString().slice(0, 10);
   const tomorrowStr = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const dueSoon = data.tasks.filter(
     (t) => t.status !== 'done' && t.deadline && (t.deadline === todayStr || t.deadline === tomorrowStr)
   );
 
-  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const daysLeftInMonth = lastDayOfMonth - now.getDate();
+  const lastDayOfMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() + 1, 0).getDate();
+  const daysLeftInMonth = lastDayOfMonth - now.getUTCDate();
   const isLastDayOfMonth = daysLeftInMonth === 0;
   const isNearMonthEnd = daysLeftInMonth <= 3;
   const unfinishedThisMonth = pending.length + doing.length;
@@ -596,16 +605,28 @@ async function sendReminder() {
     await client.pushMessage(data.lineUserId, { type: 'text', text: endText.trim() });
   }
 
-  // ----- สรุปประจำวัน (ค้าง/กำลังทำ + เตือนใกล้ครบกำหนด) -----
+  // ----- สรุปประจำวัน (รายละเอียดครบทั้งค้างและกำลังทำ + เตือนใกล้ครบกำหนด) -----
   if (pending.length === 0 && doing.length === 0 && dueSoon.length === 0 && !(isNearMonthEnd && unfinishedThisMonth > 0)) {
     return;
   }
 
-  let text = `📋 สรุปงาน — ${monthLabel(mKey)}\nค้าง ${pending.length} | กำลังทำ ${doing.length}\n\n`;
-  pending.slice(0, 10).forEach((t, i) => {
-    text += `${i + 1}. ${t.text}\n`;
-  });
-  if (pending.length > 10) text += `...และอีก ${pending.length - 10} งาน\n`;
+  let text = `📋 สรุปงาน — ${monthLabel(mKey)}\nค้าง ${pending.length} | กำลังทำ ${doing.length}\n`;
+
+  if (pending.length > 0) {
+    text += `\nค้าง:\n`;
+    pending.slice(0, 15).forEach((t, i) => {
+      text += `${i + 1}. ${t.text}\n`;
+    });
+    if (pending.length > 15) text += `...และอีก ${pending.length - 15} งาน\n`;
+  }
+
+  if (doing.length > 0) {
+    text += `\nกำลังทำ:\n`;
+    doing.slice(0, 15).forEach((t, i) => {
+      text += `${i + 1}. ${t.text}\n`;
+    });
+    if (doing.length > 15) text += `...และอีก ${doing.length - 15} งาน\n`;
+  }
 
   if (dueSoon.length > 0) {
     text += `\n⏰ ใกล้ครบกำหนด:\n`;
